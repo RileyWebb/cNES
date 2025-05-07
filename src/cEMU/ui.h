@@ -1,0 +1,1 @@
+void UI_InitStlye();
