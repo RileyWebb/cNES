@@ -1,0 +1,1 @@
+int disassemble(NES *nes, uint16_t address, char *buffer, size_t buffer_size);
