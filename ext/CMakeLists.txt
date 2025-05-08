@@ -42,7 +42,7 @@ else (WIN32)
     target_compile_definitions(cimgui PUBLIC IMGUI_IMPL_API=extern\t\"C\"\t)
 endif (WIN32)
 
-target_link_libraries(cimgui PUBLIC SDL2 ${CIMGUI_LIBRARIES} stdc++)
+target_link_libraries(cimgui PUBLIC SDL2 ${CIMGUI_LIBRARIES} stdc++ m)
 
 #CIMPLOT
 project(cimplot LANGUAGES CXX)

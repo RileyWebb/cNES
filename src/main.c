@@ -33,7 +33,7 @@ int main(int argc, char **argv)
 
     NES* nes = NES_Create();
 
-    NES_Load("nestest.nes", nes);
+    NES_Load("tests/nestest.nes", nes);
 
     //CPU_Reset(cpu); // Reset CPU to initial state
     nes->cpu->pc = 0xC000;

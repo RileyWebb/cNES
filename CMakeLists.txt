@@ -51,7 +51,7 @@ add_custom_target(copy_info
         
 add_custom_target(copy_tests
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/*
         ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/tests/)
 
 add_dependencies(cNES copy_info copy_tests)

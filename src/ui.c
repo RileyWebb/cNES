@@ -117,7 +117,7 @@ void UI_Init()
 
     glewExperimental = GL_TRUE;
     GLenum err = glewInit();
-    if (err != GLEW_OK)
+    if (err != GLEW_OK && err != GLEW_ERROR_NO_GLX_DISPLAY)
     {
         fprintf(stderr, "Could not initialize GLEW: %s\n", glewGetErrorString(err));
         return;
@@ -152,17 +152,15 @@ void UI_DrawDisassembler(NES* nes)
     
     uint16_t currentPC = nes->cpu->pc;
 
-    igBeginTable("Disassembled View", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable, (ImVec2){250,500}, 30);
-
-    
+    igBeginTable("Disassembled View", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable, (ImVec2){250,500}, 30);
 
     //igTableSetupColumn("Address", ImGuiTableColumnFlags_WidthStretch, 10, 0);
     //igTableSetupColumn("Opcode", ImGuiTableColumnFlags_WidthStretch, 10, 0);
-    //igTableSetupColumn("Other Address", ImGuiTableColumnFlags_WidthStretch, 10, 0);
     igTableHeadersRow();
 
     for (size_t i = 0; i < 16; i++)
     {
+
         igTableNextRow(ImGuiTableRowFlags_Headers, 20);
         char disasm_buf[128];
 
