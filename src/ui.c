@@ -4,6 +4,7 @@
 #include <cimgui_impl.h>
 #include <cimplot.h>
 #include <GL/glew.h>
+#include <SDL2/SDL_opengl.h>
 
 #include "cNES/nes.h"
 #include "cNES/cpu.h"
@@ -132,13 +133,21 @@ void UI_Init()
     ImGui_ImplSDL2_InitForOpenGL(window, glContext);
     ImGui_ImplOpenGL3_Init("#version 130");
 
+    SDL_GL_SetSwapInterval(1); // Enable vsync
+
     UI_InitStlye();
 }
 
-void UI_Draw()
+void UI_Draw(NES* nes)
 {
-    igBegin("cEMU", NULL, 0);
-    igText("Hello, world!");
+    igSetNextWindowDockID(igGetID_Str("MyDockSpace"), ImGuiCond_Always);
+
+    igBegin("cEMU", NULL, ImGuiWindowFlags_DockNodeHost | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar);
+    igBeginMenuBar();
+    igSetCursorPosY(0); // Move cursor to top
+    igText("cEMU");
+    igEndMenuBar();
+    //igImage((ImTextureID), (ImVec2){100,100}, (ImVec2){0,0}, (ImVec2){1,1}, (ImVec4){1,1,1,1}, (ImVec4){0.5f,0.5f,0.5f,1.0f});
     igEnd();
     igShowDemoWindow(NULL);
 }
@@ -148,29 +157,39 @@ bool ui_showDisassembler = 1;
 void UI_DrawDisassembler(NES* nes) 
 {
     igBegin("Disassembler", &ui_showDisassembler, 0);
-    igText("Hello, world!");
-    
+    igTextColored((ImVec4){1.0f, 0.0f, 0.0f, 1.0f}, "%s", "Disassembled View");
     uint16_t currentPC = nes->cpu->pc;
 
-    igBeginTable("Disassembled View", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable, (ImVec2){250,500}, 30);
+    igBeginTable("Disassembled View", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable, (ImVec2){250,16*16}, 30);
 
-    //igTableSetupColumn("Address", ImGuiTableColumnFlags_WidthStretch, 10, 0);
-    //igTableSetupColumn("Opcode", ImGuiTableColumnFlags_WidthStretch, 10, 0);
+    igTableSetupColumn("Address", ImGuiTableColumnFlags_WidthStretch, 10, 0);
+    igTableSetupColumn("Opcode", ImGuiTableColumnFlags_WidthStretch, 10, 0);
     igTableHeadersRow();
 
+    uint16_t next = 0;
     for (size_t i = 0; i < 16; i++)
     {
 
-        igTableNextRow(ImGuiTableRowFlags_Headers, 20);
+        igTableNextRow(0, 20);
         char disasm_buf[128];
 
-        disassemble(nes, currentPC + i, disasm_buf, sizeof(disasm_buf));
 
-        igTableSetColumnIndex(0);
-        igText("0x%04X", currentPC + i);
+
+        if (next == 0)
+        {
+            next = disassemble(nes, currentPC + i, disasm_buf, sizeof(disasm_buf));
+            igTableSetColumnIndex(0);
+            igText("0x%04X", currentPC);
+        } else
+        {
+            next = disassemble(nes, next, disasm_buf, sizeof(disasm_buf));
+            igTableSetColumnIndex(0);
+            igText("0x%04X", next);
+        }
+
+
         igTableSetColumnIndex(1);
-        igText("%-20s",disasm_buf);
-
+        igText("%-20s", disasm_buf);
         //igTableEndRow(igTableFindByID("Disassembled View"))
     }
     
@@ -203,8 +222,6 @@ void UI_Update(NES* nes)
                 {
                     case SDL_WINDOWEVENT_RESIZED:
                     case SDL_WINDOWEVENT_SIZE_CHANGED:
-                        //SDL_GL_GetDrawableSize(window, &c_windowWidth, &c_windowHeight);
-                        //R_ResizeViewport(c_windowWidth, c_windowHeight);
                         break;
                 }
                 break;
@@ -228,7 +245,17 @@ void UI_Update(NES* nes)
 
     //igShowDemoWindow((bool *) &ui_running);
 
-    UI_Draw();
+    if (ioptr->ConfigFlags & ImGuiConfigFlags_DockingEnable) {
+        ImGuiID dockspace_id = igGetID_Str("MyDockSpace");
+        igDockSpaceOverViewport(dockspace_id, igGetMainViewport(), ImGuiDockNodeFlags_PassthruCentralNode, NULL);
+        // Or create a specific window as a dock space:
+        // ImGui::Begin("MainDockArea", ..., ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ...);
+        // ImGuiID dockspace_id = ImGui::GetID("MainDockArea");
+        // ImGui::DockSpace(dockspace_id, ImVec2(0,0), ImGuiDockNodeFlags_None);
+        // ImGui::End();
+    }
+
+    UI_Draw(nes);
     UI_DrawDisassembler(nes);
 
     igRender();
