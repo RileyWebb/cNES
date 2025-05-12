@@ -15,13 +15,11 @@ NES *NES_Create()
     if (!nes) {goto error;}
     memset(nes, 0, sizeof(NES)); // Initialize NES structure to zero
 
-    nes->cpu = malloc(sizeof(CPU));
+    nes->cpu = CPU_Create(nes);
     if (!nes->cpu) {goto error;}
-    memset(nes->cpu, 0, sizeof(CPU)); // Initialize CPU structure to zero
-    nes->cpu->nes = nes;
 
-    //nes->ppu = malloc(sizeof(PPU));
-    //if (!nes->ppu) {goto error;}
+    nes->ppu = PPU_Create(nes);
+    if (!nes->ppu) {goto error;}
 
     nes->bus = malloc(sizeof(BUS));
     if (!nes->bus) {goto error;}
@@ -86,7 +84,7 @@ int NES_Load(const char* path, NES* nes)
     uint16_t prg_rom_size = prg_rom_banks * 0x4000; // Total PRG ROM size in bytes
     uint16_t chr_rom_size = chr_rom_banks * 0x2000; // Total CHR ROM size in bytes
     uint16_t trainer_size = has_trainer ? 512 : 0; // Trainer size in bytes
-    uint16_t total_size = prg_rom_size + chr_rom_size + trainer_size; // Total size of the ROM
+    size_t total_size = prg_rom_size + chr_rom_size + trainer_size; // Total size of the ROM
 
     uint8_t *prg_data = malloc(prg_rom_size);
     if (!prg_data) 
@@ -105,19 +103,18 @@ int NES_Load(const char* path, NES* nes)
         return -1;
     }
 
-    uint8_t *trainer_data = malloc(trainer_size);
-    if (has_trainer && !trainer_data) 
-    {
-        DEBUG_ERROR("Could not allocate memory for trainer data");
-        free(prg_data);
-        free(chr_data);
-        fclose(file);
-        return -1;
-    }
-    
-    // Read the trainer data if present
-    if (has_trainer) 
-    {
+    uint8_t *trainer_data = NULL;
+    if (has_trainer) {
+        trainer_data = malloc(trainer_size);
+        if (!trainer_data) 
+        {
+            DEBUG_ERROR("Could not allocate memory for trainer data");
+            free(prg_data);
+            free(chr_data);
+            fclose(file);
+            return -1;
+        }
+        // Read the trainer data if present
         if (fread(trainer_data, 1, trainer_size, file) != trainer_size) 
         {
             DEBUG_ERROR("Could not read trainer data from %s", path);
@@ -135,35 +132,76 @@ int NES_Load(const char* path, NES* nes)
         DEBUG_ERROR("Could not read PRG ROM data from %s", path);
         free(prg_data);
         free(chr_data);
-        free(trainer_data);
+        if (trainer_data) free(trainer_data);
         fclose(file);
         return -1;
     }
 
     // Read the CHR ROM data
-    if (fread(chr_data, 1, chr_rom_size, file) != chr_rom_size) 
-    {
-        DEBUG_ERROR("Could not read CHR ROM data from %s", path);
-        free(prg_data);
-        free(chr_data);
-        free(trainer_data);
-        fclose(file);
-        return -1;
+    if (chr_rom_size > 0) {
+        if (fread(chr_data, 1, chr_rom_size, file) != chr_rom_size) 
+        {
+            DEBUG_ERROR("Could not read CHR ROM data from %s", path);
+            free(prg_data);
+            free(chr_data);
+            if (trainer_data) free(trainer_data);
+            fclose(file);
+            return -1;
+        }
     }
 
     fclose(file); // Close the ROM file after reading
 
-    // Load the PRG ROM into the CPU's memory map (0x8000 - 0xFFFF)
-    memcpy(nes->bus->memory + 0x8000, prg_data, prg_rom_size); // Load PRG ROM into $8000-$FFFF
-    memcpy(nes->bus->memory + 0xC000, prg_data, prg_rom_size); // Mirror PRG ROM into $C000-$FFFF
-    // Load the CHR ROM into the PPU's memory map (0x0000 - 0x1FFF)
-    memcpy(nes->bus->memory + 0x0000, chr_data, chr_rom_size); // Load CHR ROM into $0000-$1FFF
-    memcpy(nes->bus->memory + 0x2000, chr_data, chr_rom_size); // Mirror CHR ROM into $2000-$3FFF
-    
+    // Load the PRG ROM into the BUS's PRG ROM area
+    memcpy(nes->bus->prgRom, prg_data, prg_rom_size);
+    // If only one PRG ROM bank, mirror it into the upper 16KB
+    if (prg_rom_banks == 1) {
+        memcpy(nes->bus->prgRom + 0x4000, prg_data, 0x4000);
+    }
+
+    // Load the CHR ROM into the BUS's CHR ROM area
+    if (chr_rom_size > 0) {
+        memcpy(nes->bus->chrRom, chr_data, chr_rom_size);
+    } else {
+        // If no CHR ROM, allocate CHR RAM (8KB)
+        memset(nes->bus->chrRom, 0, 0x2000);
+    }
+
+    // Initialize VRAM and palette RAM to zero
+    memset(nes->bus->vram, 0, sizeof(nes->bus->vram));
+    memset(nes->bus->palette, 0, sizeof(nes->bus->palette));
+
+    // Set mapper, mirroring, and ROM size info in the BUS struct
+    nes->bus->mapper = mapper_number;
+    nes->bus->mirroring = mirroring;
+    nes->bus->prgRomSize = prg_rom_banks;
+    nes->bus->chrRomSize = chr_rom_banks;
+
     // Free allocated memory
     free(prg_data);
     free(chr_data);
-    if (has_trainer) free(trainer_data);
+    if (trainer_data) free(trainer_data);
 
     return 0;
+}
+
+// Add NES_Step function to step PPU and CPU, and handle NMI interrupts
+void NES_Step(NES *nes)
+{
+    // Step the PPU three times for every CPU step (PPU runs 3x faster)
+    for (int i = 0; i < 3; ++i) {
+        PPU_Step(nes->ppu);
+    }
+
+    // Handle NMI if triggered by PPU
+    if (nes->ppu->nmi_interrupt) {
+        CPU_NMI(nes->cpu);
+        nes->ppu->nmi_interrupt = 0; // Clear the NMI interrupt after CPU services it
+    }
+
+    // Step the CPU, halt execution if CPU_Step returns -1
+    if (CPU_Step(nes->cpu) == -1) {
+        DEBUG_ERROR("CPU execution halted due to error");
+        exit(EXIT_FAILURE);
+    }
 }

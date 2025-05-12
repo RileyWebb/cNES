@@ -1,422 +1,270 @@
-/*
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
 
-#include "debug.h" // Assuming you have a debug.h for logging
-
+#include "debug.h"
 #include "cNES/nes.h"
 #include "cNES/bus.h"
+
 #include "cNES/ppu.h"
 
-// Forward declaration for internal PPU memory access
-uint8_t PPU_ReadMemory(PPU* ppu, uint16_t address);
-void PPU_WriteMemory(PPU* ppu, uint16_t address, uint8_t value);
+// --- NES master palette (64 colors, RGBA format) ---
+static const uint32_t nes_palette[64] = {
+    0x666666FF, 0x002A88FF, 0x1412A7FF, 0x3B00A4FF, 0x5C007EFF, 0x6E0040FF, 0x6C0600FF, 0x561D00FF,
+    0x333500FF, 0x0B4800FF, 0x005200FF, 0x004F08FF, 0x00404DFF, 0x000000FF, 0x000000FF, 0x000000FF,
+    0xADADADFF, 0x155FD9FF, 0x4240FFFF, 0x7527FEFF, 0xA01ACCFF, 0xB71E7BFF, 0xB53120FF, 0x994E00FF,
+    0x6B6D00FF, 0x388700FF, 0x0E9300FF, 0x008F32FF, 0x007C8DFF, 0x000000FF, 0x000000FF, 0x000000FF,
+    0xFFFEFFFF, 0x64B0FFFF, 0x9290FFFF, 0xC676FFFF, 0xF36AFFFF, 0xFE6ECCFF, 0xFE8170FF, 0xEA9E22FF, // Corrected typo F36AFFff to F36AFFFF
+    0xBCBE00FF, 0x88D800FF, 0x5CE430FF, 0x45E082FF, 0x48CDDEFF, 0x4F4F4FFF, 0x000000FF, 0x000000FF,
+    0xFFFEFFFF, 0xC0DFFFFF, 0xD3D2FFFF, 0xE8C8FFFF, 0xFBC2FFFF, 0xFEC4EAFF, 0xFECCC5FF, 0xF7D8A5FF,
+    0xE4E594FF, 0xCFEE96FF, 0xBDF4ABFF, 0xB3F3CCFF, 0xB5EBF2FF, 0xB8B8B8FF, 0x000000FF, 0x000000FF
+};
 
-// Function to create and initialize the PPU
-PPU* PPU_Create()
-{
-    PPU* ppu = malloc(sizeof(PPU));
-    if (!ppu) {
-        DEBUG_ERROR("Failed to allocate memory for PPU");
-        return NULL;
+// --- Helper Functions ---
+static uint16_t mirror_vram_addr(NES *nes, uint16_t addr) {
+    // addr is PPU address $2000-$2FFF (or mirrors up to $3EFF for nametables)
+    addr &= 0x0FFF; // Relative to $2000, mask to 4 nametable region (0x000 - 0xFFF)
+    
+    // Determine which of the four 1KB nametable areas is being accessed
+    uint16_t table_index = addr / 0x0400; // Nametable index (0, 1, 2, or 3)
+    uint16_t offset_in_table = addr % 0x0400; // Offset within that 1KB nametable (0x000 - 0x3FF)
+
+    if (nes->bus->mirroring == 0) { // Horizontal mirroring
+        // Nametable 0 ($2000) and Nametable 2 ($2800) map to the first 1KB of PPU VRAM.
+        // Nametable 1 ($2400) and Nametable 3 ($2C00) map to the second 1KB of PPU VRAM.
+        if (table_index == 0 || table_index == 2) {
+            return offset_in_table; // Maps to VRAM $0000 - $03FF
+        } else { // table_index == 1 || table_index == 3
+            return offset_in_table + 0x0400; // Maps to VRAM $0400 - $07FF
+        }
+    } else { // Vertical mirroring (nes->bus->mirroring == 1)
+        // Nametable 0 ($2000) and Nametable 1 ($2400) map to the first 1KB of PPU VRAM.
+        // Nametable 2 ($2800) and Nametable 3 ($2C00) map to the second 1KB of PPU VRAM.
+        if (table_index == 0 || table_index == 1) {
+            return offset_in_table; // Maps to VRAM $0000 - $03FF
+        } else { // table_index == 2 || table_index == 3
+            return offset_in_table + 0x0400; // Maps to VRAM $0400 - $07FF
+        }
     }
-    memset(ppu, 0, sizeof(PPU)); // Initialize PPU structure to zero
+    // Note: This assumes ppu->vram is 2KB (0x800 bytes).
+    // For other mirroring types (e.g., four-screen), this logic would need extension.
+}
 
-    // Initialize PPU registers to their power-up state
-    ppu->ctrl = 0x00;
-    ppu->mask = 0x00;
-    ppu->status = 0xA0; // Status register power-up state (bit 5 and 7 set)
-    ppu->scroll = 0x00;
-    ppu->oam_addr = 0x00;
-    ppu->oam_data = 0x00;
-    ppu->addr = 0x0000;
-    ppu->data = 0x00;
+static uint8_t ppu_read_vram(PPU *ppu, uint16_t addr) {
+    addr &= 0x3FFF;
+    if (addr < 0x2000) {
+        // CHR ROM/RAM via mapper
+        return BUS_PPU_ReadCHR(ppu->nes->bus, addr);
+    } else if (addr < 0x3F00) {
+        return ppu->vram[mirror_vram_addr(ppu->nes, addr)];
+    } else if (addr < 0x4000) {
+        uint16_t pal = addr & 0x1F;
+        if (pal == 0x10) pal = 0x00;
+        if (pal == 0x14) pal = 0x04;
+        if (pal == 0x18) pal = 0x08;
+        if (pal == 0x1C) pal = 0x0C;
+        return ppu->palette[pal];
+    }
+    return 0;
+}
 
-    // Initialize internal state
-    ppu->scanline = 241; // Start at post-render scanline
-    ppu->cycle = 0;
-    ppu->frame_odd = 0; // Start with an even frame
+static void ppu_write_vram(PPU *ppu, uint16_t addr, uint8_t value) {
+    addr &= 0x3FFF;
+    if (addr < 0x2000) {
+        BUS_PPU_WriteCHR(ppu->nes->bus, addr, value);
+    } else if (addr < 0x3F00) {
+        ppu->vram[mirror_vram_addr(ppu->nes, addr)] = value;
+    } else if (addr < 0x4000) {
+        uint16_t pal = addr & 0x1F;
+        if (pal == 0x10) pal = 0x00;
+        if (pal == 0x14) pal = 0x04;
+        if (pal == 0x18) pal = 0x08;
+        if (pal == 0x1C) pal = 0x0C;
+        ppu->palette[pal] = value;
+    }
+}
 
-    // Initialize internal VRAM address and temporary VRAM address
-    ppu->vram_addr = 0x0000;
-    ppu->temp_vram_addr = 0x0000;
+// --- PPU API Implementation ---
 
-    // Initialize fine X scroll
-    ppu->fine_x_scroll = 0;
-
-    // Initialize PPU data buffer
-    ppu->data_buffer = 0x00;
-
-    // Initialize NMI flag
-    ppu->nmi_occured = 0;
-    ppu->nmi_output = 0;
-    ppu->nmi_previous = 0;
-    ppu->nmi_interrupt = 0;
-
-
-    DEBUG_INFO("PPU created and initialized");
+PPU *PPU_Create(NES *nes) {
+    PPU *ppu = calloc(1, sizeof(PPU));
+    if (!ppu) return NULL; // Allocation check
+    ppu->nes = nes;
+    // PPU_Reset will initialize all members to their default power-up/reset states.
+    PPU_Reset(ppu); 
+    // Initial scanline/cycle can be set after reset if specific startup is needed,
+    // but PPU_Reset already sets scanline = 241, cycle = 0.
     return ppu;
 }
 
-// Function to destroy the PPU
-void PPU_Destroy(PPU* ppu)
-{
-    if (ppu) {
-        free(ppu);
-        DEBUG_INFO("PPU destroyed");
-    }
+void PPU_Destroy(PPU *ppu) {
+    free(ppu);
 }
 
-// Function to reset the PPU (similar to power-up state)
-void PPU_Reset(PPU* ppu)
-{
-    ppu->ctrl = 0x00;
-    ppu->mask = 0x00;
+void PPU_Reset(PPU *ppu) {
+    memset(ppu->vram, 0, sizeof(ppu->vram));
+    memset(ppu->palette, 0, sizeof(ppu->palette));
+    memset(ppu->oam, 0, sizeof(ppu->oam));
+    ppu->ctrl = ppu->mask = 0;
     ppu->status = 0xA0;
-    ppu->scroll = 0x00;
-    ppu->oam_addr = 0x00;
-
+    ppu->oam_addr = 0;
+    ppu->scroll_latch = ppu->addr_latch = 0;
+    ppu->scroll_x = ppu->scroll_y = 0;
+    ppu->vram_addr = ppu->temp_addr = 0;
+    ppu->fine_x = 0;
+    ppu->data_buffer = 0;
     ppu->scanline = 241;
     ppu->cycle = 0;
     ppu->frame_odd = 0;
-
-    ppu->vram_addr = 0x0000;
-    ppu->temp_vram_addr = 0x0000;
-    ppu->fine_x_scroll = 0;
-    ppu->data_buffer = 0x00;
-
-    ppu->nmi_occured = 0;
-    ppu->nmi_output = 0;
-    ppu->nmi_previous = 0;
-    ppu->nmi_interrupt = 0;
-
-    DEBUG_INFO("PPU reset");
+    ppu->nmi_occured = ppu->nmi_output = ppu->nmi_previous = ppu->nmi_interrupt = 0;
 }
 
-// Function to read from PPU registers (CPU side)
-uint8_t PPU_ReadRegister(NES* nes, uint16_t address)
-{
-    PPU* ppu = nes->ppu;
-    uint8_t data = 0x00;
-
-    // PPU registers are mirrored every 8 bytes from 0x2000 to 0x3FFF
-    uint16_t register_address = 0x2000 + (address & 0x0007);
-
-    switch (register_address) {
-        case 0x2002: // PPUSTATUS
-            // Reading PPUSTATUS clears bit 7 (VBLANK) and the address latch
-            data = ppu->status;
-            ppu->status &= ~0x80; // Clear VBLANK flag
-            ppu->address_latch = 0; // Clear address latch
-            ppu->nmi_occured = 0; // Reading status also clears the NMI interrupt flag
+uint8_t PPU_ReadRegister(PPU *ppu, uint16_t addr) {
+    uint8_t ret = 0;
+    switch (addr & 7) {
+        case 2: // PPUSTATUS
+            ret = (ppu->status & 0xE0) | (ppu->data_buffer & 0x1F);
+            ppu->status &= ~0x80;
+            ppu->addr_latch = 0;
             break;
-
-        case 0x2004: // OAMDATA
-            // Reading OAMDATA reads from OAM at the address specified by OAMADDR
-            data = ppu->oam[ppu->oam_addr];
-            // Reads from OAMDATA during rendering (scanlines 0-239) increment OAMADDR
-            // Reads outside of rendering do not increment OAMADDR
-            // This is a simplification; actual behavior depends on PPU state
-            // For now, we'll always increment for simplicity in this basic structure
-            // ppu->oam_addr++; // Auto-increment OAMADDR (simplified)
+        case 4: // OAMDATA
+            ret = ppu->oam[ppu->oam_addr];
             break;
-
-        case 0x2007: // PPUDATA
-            // Reading PPUDATA reads from VRAM at the address specified by PPUADDR
-            // The first read after setting PPUADDR is buffered, subsequent reads get the actual data
-            // This is a common NES PPU behavior
-            data = ppu->data_buffer; // Return the buffered data
-            ppu->data_buffer = PPU_ReadMemory(ppu, ppu->vram_addr); // Read the actual data for the next read
-
-            // Auto-increment PPUADDR based on PPUCTRL bit 2
-            if (ppu->ctrl & 0x04) { // VRAM address increment (0: add 1, 1: add 32)
-                ppu->vram_addr += 32;
-            } else {
-                ppu->vram_addr += 1;
-            }
+        case 7: // PPUDATA
+            ret = ppu->data_buffer;
+            ppu->data_buffer = ppu_read_vram(ppu, ppu->vram_addr);
+            if (ppu->vram_addr >= 0x3F00) ret = ppu->data_buffer; // Palette reads are not buffered
+            ppu->vram_addr += (ppu->ctrl & 0x04) ? 32 : 1;
             break;
-
         default:
-            // Reading other registers is generally not allowed or has specific side effects
-            // For this basic implementation, we'll just return 0
-            DEBUG_WARN("Attempted to read from unimplemented PPU register 0x%04X", register_address);
             break;
     }
-
-    // The lower 5 bits of PPUSTATUS are not connected and return the last value on the data bus.
-    // This is a simplification; a full emulator would need to capture the last data bus value.
-    // For now, we'll just mask the status bits.
-    // data = (data & 0xE0) | (ppu->status & 0x1F); // Simplified: combine read data with lower status bits
-
-    return data;
+    return ret;
 }
 
-// Function to write to PPU registers (CPU side)
-void PPU_WriteRegister(NES* nes, uint16_t address, uint8_t value)
-{
-    PPU* ppu = nes->ppu;
-
-    // PPU registers are mirrored every 8 bytes from 0x2000 to 0x3FFF
-    uint16_t register_address = 0x2000 + (address & 0x0007);
-
-    switch (register_address) {
-        case 0x2000: // PPUCTRL
+void PPU_WriteRegister(PPU *ppu, uint16_t addr, uint8_t value) {
+    switch (addr & 7) {
+        case 0: // PPUCTRL
             ppu->ctrl = value;
-            // Update the base nametable address in the temporary VRAM address
-            ppu->temp_vram_addr = (ppu->temp_vram_addr & 0xF3FF) | ((uint16_t)(value & 0x03) << 10);
-            // Update NMI enable flag
-            ppu->nmi_output = (value >> 7) & 0x01;
-            ppu->nmi_change(); // Trigger NMI change check
+            ppu->temp_addr = (ppu->temp_addr & 0xF3FF) | ((value & 3) << 10);
+            ppu->nmi_output = (value >> 7) & 1;
             break;
-
-        case 0x2001: // PPUMASK
+        case 1: // PPUMASK
             ppu->mask = value;
             break;
-
-        case 0x2003: // OAMADDR
+        case 2: // PPUSTATUS (read-only)
+            break;
+        case 3: // OAMADDR
             ppu->oam_addr = value;
             break;
-
-        case 0x2004: // OAMDATA
-            // Writing to OAMDATA writes to OAM at the address specified by OAMADDR
-            ppu->oam[ppu->oam_addr] = value;
-            ppu->oam_addr++; // Auto-increment OAMADDR after write
+        case 4: // OAMDATA
+            ppu->oam[ppu->oam_addr++] = value;
             break;
-
-        case 0x2005: // PPUSCROLL
-            // Writing to PPUSCROLL is a two-step process
-            if (ppu->address_latch == 0) {
-                // First write: horizontal scroll and fine X scroll
-                ppu->scroll = value;
-                ppu->temp_vram_addr = (ppu->temp_vram_addr & 0xFFE0) | (uint16_t)(value >> 3); // Coarse X
-                ppu->fine_x_scroll = value & 0x07; // Fine X
-                ppu->address_latch = 1;
+        case 5: // PPUSCROLL
+            if (!ppu->scroll_latch) {
+                ppu->fine_x = value & 7;
+                ppu->temp_addr = (ppu->temp_addr & 0xFFE0) | (value >> 3);
+                ppu->scroll_latch = 1;
             } else {
-                // Second write: vertical scroll
-                ppu->scroll = value;
-                ppu->temp_vram_addr = (ppu->temp_vram_addr & 0x8FFF) | ((uint16_t)(value & 0x07) << 12); // Fine Y
-                ppu->temp_vram_addr = (ppu->temp_vram_addr & 0xFC1F) | ((uint16_t)(value & 0xF8) << 2); // Coarse Y
-                ppu->address_latch = 0;
+                ppu->temp_addr = (ppu->temp_addr & 0x8FFF) | ((value & 7) << 12);
+                ppu->temp_addr = (ppu->temp_addr & 0xFC1F) | ((value & 0xF8) << 2);
+                ppu->scroll_latch = 0;
             }
             break;
-
-        case 0x2006: // PPUADDR
-            // Writing to PPUADDR is a two-step process
-            if (ppu->address_latch == 0) {
-                // First write: high byte of the VRAM address
-                ppu->temp_vram_addr = (ppu->temp_vram_addr & 0x00FF) | ((uint16_t)(value & 0x3F) << 8);
-                ppu->address_latch = 1;
+        case 6: // PPUADDR
+            if (!ppu->addr_latch) {
+                ppu->temp_addr = (ppu->temp_addr & 0x00FF) | ((value & 0x3F) << 8);
+                ppu->addr_latch = 1;
             } else {
-                // Second write: low byte of the VRAM address
-                ppu->temp_vram_addr = (ppu->temp_vram_addr & 0xFF00) | (uint16_t)value;
-                ppu->vram_addr = ppu->temp_vram_addr; // Update the actual VRAM address
-                ppu->address_latch = 0;
+                ppu->temp_addr = (ppu->temp_addr & 0xFF00) | value;
+                ppu->vram_addr = ppu->temp_addr;
+                ppu->addr_latch = 0;
             }
             break;
-
-        case 0x2007: // PPUDATA
-            // Writing to PPUDATA writes the value to VRAM at the address specified by PPUADDR
-            PPU_WriteMemory(ppu, ppu->vram_addr, value);
-
-            // Auto-increment PPUADDR based on PPUCTRL bit 2
-            if (ppu->ctrl & 0x04) { // VRAM address increment (0: add 1, 1: add 32)
-                ppu->vram_addr += 32;
-            } else {
-                ppu->vram_addr += 1;
-            }
-            break;
-
-        default:
-            // Writing to other registers is generally not allowed or has specific side effects
-            // For this basic implementation, we'll just ignore the write
-            DEBUG_WARN("Attempted to write to unimplemented PPU register 0x%04X with value 0x%02X", register_address, value);
+        case 7: // PPUDATA
+            ppu_write_vram(ppu, ppu->vram_addr, value);
+            ppu->vram_addr += (ppu->ctrl & 0x04) ? 32 : 1;
             break;
     }
 }
 
-// Internal function to read from PPU memory (VRAM, Pattern Tables, etc.)
-uint8_t PPU_ReadMemory(PPU* ppu, uint16_t address)
-{
-    uint8_t data = 0x00;
-    uint16_t mirrored_address = address & 0x3FFF; // PPU memory is mirrored every 0x4000 bytes
-
-    if (mirrored_address < 0x2000) {
-        // 0x0000 - 0x1FFF: Pattern Tables (usually CHR ROM)
-        // In this basic structure, we'll assume CHR ROM is loaded directly into ppu->vram for simplicity.
-        // A real emulator would need to handle mappers and potentially CHR RAM.
-        data = ppu->vram[mirrored_address];
-    } else if (mirrored_address < 0x3F00) {
-        // 0x2000 - 0x3EFF: Nametables and Attribute Tables
-        // Handle mirroring based on the cartridge's mirroring type (horizontal or vertical)
-        // This is a simplification; proper mirroring requires mapper implementation.
-        uint16_t nametable_address = mirrored_address & 0x0FFF; // Mask to get address within nametable space
-        // Basic mirroring (assuming horizontal for now)
-        if (nes->bus->mirroring == 0) { // Horizontal mirroring
-             if (nametable_address >= 0x0800 && nametable_address < 0x0C00) nametable_address -= 0x0800;
-             if (nametable_address >= 0x0C00 && nametable_address < 0x1000) nametable_address -= 0x0800;
-        } else { // Vertical mirroring
-             if (nametable_address >= 0x0400 && nametable_address < 0x0800) nametable_address -= 0x0400;
-             if (nametable_address >= 0x0C00 && nametable_address < 0x1000) nametable_address -= 0x0400;
-        }
-        data = ppu->vram[0x2000 + nametable_address];
-
-    } else if (mirrored_address < 0x4000) {
-        // 0x3F00 - 0x3FFF: Palettes
-        uint16_t palette_address = mirrored_address & 0x001F; // Mask to get address within palette space
-        // Palette mirroring: 0x3F10, 0x3F14, 0x3F18, 0x3F1C are mirrors of 0x3F00, 0x3F04, 0x3F08, 0x3F0C
-        if (palette_address == 0x10) palette_address = 0x00;
-        else if (palette_address == 0x14) palette_address = 0x04;
-        else if (palette_address == 0x18) palette_address = 0x08;
-        else if (palette_address == 0x1C) palette_address = 0x0C;
-
-        data = ppu->vram[0x3F00 + palette_address];
-    }
-
-    return data;
+// --- NMI signaling ---
+void PPU_TriggerNMI(PPU *ppu) {
+    ppu->nmi_interrupt = 1;
 }
 
-// Internal function to write to PPU memory (VRAM, Pattern Tables, etc.)
-void PPU_WriteMemory(PPU* ppu, uint16_t address, uint8_t value)
-{
-     uint16_t mirrored_address = address & 0x3FFF; // PPU memory is mirrored every 0x4000 bytes
-
-    if (mirrored_address < 0x2000) {
-        // 0x0000 - 0x1FFF: Pattern Tables (usually CHR ROM, read-only)
-        // If the cartridge has CHR RAM, writes would be allowed here.
-        // For simplicity, we'll allow writes to vram in this range, assuming it's CHR RAM or for testing.
-        ppu->vram[mirrored_address] = value;
-    } else if (mirrored_address < 0x3F00) {
-        // 0x2000 - 0x3EFF: Nametables and Attribute Tables
-        // Handle mirroring based on the cartridge's mirroring type (horizontal or vertical)
-        // This is a simplification; proper mirroring requires mapper implementation.
-         uint16_t nametable_address = mirrored_address & 0x0FFF; // Mask to get address within nametable space
-        // Basic mirroring (assuming horizontal for now)
-        if (nes->bus->mirroring == 0) { // Horizontal mirroring
-             if (nametable_address >= 0x0800 && nametable_address < 0x0C00) nametable_address -= 0x0800;
-             if (nametable_address >= 0x0C00 && nametable_address < 0x1000) nametable_address -= 0x0800;
-        } else { // Vertical mirroring
-             if (nametable_address >= 0x0400 && nametable_address < 0x0800) nametable_address -= 0x0400;
-             if (nametable_address >= 0x0C00 && nametable_address < 0x1000) nametable_address -= 0x0400;
-        }
-        ppu->vram[0x2000 + nametable_address] = value;
-
-    } else if (mirrored_address < 0x4000) {
-        // 0x3F00 - 0x3FFF: Palettes
-        uint16_t palette_address = mirrored_address & 0x001F; // Mask to get address within palette space
-         // Palette mirroring: 0x3F10, 0x3F14, 0x3F18, 0x3F1C are mirrors of 0x3F00, 0x3F04, 0x3F08, 0x3F0C
-        if (palette_address == 0x10) palette_address = 0x00;
-        else if (palette_address == 0x14) palette_address = 0x04;
-        else if (palette_address == 0x18) palette_address = 0x08;
-        else if (palette_address == 0x1C) palette_address = 0x0C;
-
-        ppu->vram[0x3F00 + palette_address] = value;
-        // Writing to the palette also updates the mirrored addresses
-        if (palette_address == 0x00) ppu->vram[0x3F10] = value;
-        else if (palette_address == 0x04) ppu->vram[0x3F14] = value;
-        else if (palette_address == 0x08) ppu->vram[0x3F18] = value;
-        else if (palette_address == 0x0C) ppu->vram[0x3F1C] = value;
-    }
-}
-
-// Function to simulate one PPU cycle
-void PPU_Step(NES* nes)
-{
-    PPU* ppu = nes->ppu;
-
-    // --- PPU Rendering Simulation (Simplified) ---
-    // This is a highly simplified representation of PPU rendering.
-    // A full implementation would involve fetching nametable bytes, attribute bytes,
-    // pattern table bytes, sprite data, and rendering pixels based on PPUCTRL and PPUMASK.
-
-    // Increment cycle and scanline
+// --- PPU Step (scanline/cycle logic, simplified) ---
+void PPU_Step(PPU *ppu) {
+    // Advance cycle/scanline
     ppu->cycle++;
-
-    // Handle end of scanline
     if (ppu->cycle > 340) {
         ppu->cycle = 0;
         ppu->scanline++;
-
-        // Handle end of frame
         if (ppu->scanline > 261) {
             ppu->scanline = 0;
-            ppu->frame_odd ^= 1; // Toggle odd/even frame
-
-            // Clear VBLANK flag at the start of the pre-render scanline (scanline 261)
-            ppu->status &= ~0x80;
-            ppu->nmi_occured = 0; // Clear NMI flag at the start of the frame
+            ppu->frame_odd ^= 1;
+            // Frame done, could signal to host
         }
     }
 
-    // --- PPU Status Updates and NMI ---
-
-    // VBLANK starts at scanline 241, cycle 1
+    // VBLANK logic
     if (ppu->scanline == 241 && ppu->cycle == 1) {
-        ppu->status |= 0x80; // Set VBLANK flag
-        ppu->nmi_occured = 1; // Indicate NMI occurred
-        ppu->nmi_change(); // Trigger NMI change check
+        ppu->status |= 0x80;
+        ppu->nmi_occured = 1;
+        if (ppu->nmi_output) {
+            PPU_TriggerNMI(ppu);
+        }
     }
-
-    // NMI logic
-    // NMI is generated if VBLANK is enabled (PPUCTRL bit 7) and VBLANK occurs
-    // The NMI signal is level-sensitive, so it stays high as long as VBLANK is set and NMI is enabled.
-    // The CPU reads the NMI vector when it detects a falling edge on the NMI line.
-    // A proper emulator needs to synchronize the PPU NMI output with the CPU's NMI input.
-
-    // Simplified NMI logic:
-    // The 'nmi_interrupt' flag is set when an NMI should occur and is cleared by the CPU reading PPUSTATUS.
-    if (ppu->nmi_output && ppu->nmi_occured) {
-        ppu->nmi_interrupt = 1;
-    } else {
+    // End VBLANK
+    if (ppu->scanline == 261 && ppu->cycle == 1) {
+        ppu->status &= ~0x80;
+        ppu->nmi_occured = 0;
         ppu->nmi_interrupt = 0;
     }
 
-    // Check for NMI change (rising edge) to signal the CPU
-    // This is a simplified check; a real emulator would need more precise timing.
-    // if (ppu->nmi_interrupt && !ppu->nmi_previous) {
-    //     // Signal CPU for NMI
-    //     // nes->cpu->nmi_pending = 1; // Assuming a flag in the CPU structure
-    // }
-    // ppu->nmi_previous = ppu->nmi_interrupt;
+    // --- Improved background rendering with attribute table and palette selection ---
+    if (ppu->scanline < 240 && ppu->cycle > 0 && ppu->cycle <= 256) {
+        int x = ppu->cycle - 1;
+        int y = ppu->scanline;
 
+        // Nametable base address (no scrolling)
+        uint16_t nt_base = 0x2000 | ((ppu->ctrl & 0x03) * 0x400);
+        uint16_t nt_addr = nt_base + ((y / 8) * 32) + (x / 8);
+        uint8_t tile_index = ppu_read_vram(ppu, nt_addr);
 
-    // --- Rendering (Placeholder) ---
-    // The actual pixel rendering logic would go here, based on the current scanline and cycle.
-    // This involves fetching tile data, palette data, sprite data, and drawing to the frame buffer.
-    // This is a complex process involving many internal PPU components and timings.
+        // Pattern table base (bit 4 of PPUCTRL)
+        uint16_t pt_base = (ppu->ctrl & 0x10) ? 0x1000 : 0x0000;
+        uint16_t tile_addr = pt_base + tile_index * 16 + (y % 8);
 
-    // Example: Drawing a single pixel (placeholder)
-    // if (ppu->scanline < 240 && ppu->cycle < 256) {
-    //     // Calculate pixel index in the frame buffer
-    //     int pixel_index = ppu->scanline * 256 + ppu->cycle;
-    //     // Determine pixel color based on rendering logic (placeholder: black)
-    //     ppu->frame_buffer[pixel_index] = 0; // Example: set pixel to black
-    // }
-}
+        uint8_t plane0 = ppu_read_vram(ppu, tile_addr);
+        uint8_t plane1 = ppu_read_vram(ppu, tile_addr + 8);
 
-// Function to handle NMI logic changes
-void PPU_nmi_change(PPU* ppu) {
-    // This function is called when PPUCTRL bit 7 (NMI enable) or PPUSTATUS bit 7 (VBLANK) changes.
-    // It determines the state of the PPU's NMI output line.
+        int bit = 7 - (x % 8);
+        uint8_t color_idx = ((plane1 >> bit) & 1) << 1 | ((plane0 >> bit) & 1);
 
-    int nmi_now = ppu->nmi_output && ppu->nmi_occured;
+        // Attribute table address and palette selection
+        uint16_t at_addr = nt_base + 0x3C0 + ((y / 32) * 8) + (x / 32);
+        uint8_t at_byte = ppu_read_vram(ppu, at_addr);
+        int shift = (((y % 32) / 16) * 2 + ((x % 32) / 16)) * 2;
+        uint8_t palette = (at_byte >> shift) & 0x03;
 
-    if (nmi_now && !ppu->nmi_previous) {
-        // Rising edge detected, trigger NMI interrupt in the CPU
-        // This requires calling a function in your CPU emulation
-        // For example: nes->cpu->trigger_nmi();
-         DEBUG_INFO("PPU: NMI rising edge detected");
-         // In a real emulator, you would signal the CPU here.
-         // For this basic structure, we'll just set a flag.
-         ppu->nmi_interrupt = 1;
+        // Palette lookup (color 0 is always universal background)
+        uint8_t palette_addr = 0x3F00 + (palette << 2) + color_idx;
+        if ((color_idx & 0x03) == 0) palette_addr = 0x3F00;
+        uint8_t color = ppu_read_vram(ppu, palette_addr);
+
+        // Use NES palette for rendering
+        ppu->framebuffer[y * 256 + x] = nes_palette[color & 0x3F];
+        // (Optional: remove or comment out debug logging for performance)
+        // DEBUG_INFO("PPU: Scanline %d, Cycle %d, Color %02X", ppu->scanline, ppu->cycle, color);
     }
-
-    ppu->nmi_previous = nmi_now;
 }
 
-// Function to get the frame buffer for display
-uint8_t* PPU_GetFrameBuffer(PPU* ppu)
-{
-    return ppu->frame_buffer;
+// --- CHR ROM/RAM access (for mappers) ---
+uint8_t PPU_CHR_Read(PPU *ppu, uint16_t addr) {
+    return BUS_PPU_ReadCHR(ppu->nes->bus, addr);
 }
-*/
+void PPU_CHR_Write(PPU *ppu, uint16_t addr, uint8_t value) {
+    BUS_PPU_WriteCHR(ppu->nes->bus, addr, value);
+}

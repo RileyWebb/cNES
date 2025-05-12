@@ -18,4 +18,6 @@ NES *NES_Create();
 int NES_Load(const char* path, NES* nes);
 void NES_Destroy(NES* nes);
 
+void NES_Step(NES *nes);
+
 #endif // NES_H

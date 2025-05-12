@@ -6,14 +6,16 @@
 #include <GL/glew.h>
 #include <SDL2/SDL_opengl.h>
 
+#include "debug.h"
 #include "cNES/nes.h"
 #include "cNES/cpu.h"
+#include "cNES/ppu.h"
 #include "cNES/debugging.h"
 
 #include "ui.h"
 
 SDL_Window *window;
-SDL_GLContext *glContext;
+SDL_GLContext glContext;
 
 ImGuiIO* ioptr;
 
@@ -110,7 +112,7 @@ void UI_Init()
     }
 
     glContext = SDL_GL_CreateContext(window);
-    if (!glContext)
+    if (glContext == NULL)
     {
         fprintf(stderr, "Could not create OpenGL context: %s\n", SDL_GetError());
         return;
@@ -133,7 +135,7 @@ void UI_Init()
     ImGui_ImplSDL2_InitForOpenGL(window, glContext);
     ImGui_ImplOpenGL3_Init("#version 130");
 
-    SDL_GL_SetSwapInterval(1); // Enable vsync
+    //SDL_GL_SetSwapInterval(1); // Enable vsync
 
     UI_InitStlye();
 }
@@ -147,12 +149,68 @@ void UI_Draw(NES* nes)
     igSetCursorPosY(0); // Move cursor to top
     igText("cEMU");
     igEndMenuBar();
-    //igImage((ImTextureID), (ImVec2){100,100}, (ImVec2){0,0}, (ImVec2){1,1}, (ImVec4){1,1,1,1}, (ImVec4){0.5f,0.5f,0.5f,1.0f});
+
+    static GLuint ppu_texture = 0;
+    if (ppu_texture == 0) {
+        glGenTextures(1, &ppu_texture);
+        glBindTexture(GL_TEXTURE_2D, ppu_texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 256, 240, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    }
+
+    // Update texture with PPU framebuffer data
+    glBindTexture(GL_TEXTURE_2D, ppu_texture);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 240, GL_RGBA, GL_UNSIGNED_BYTE, nes->ppu->framebuffer);
+
+    // Draw the texture using ImGui
+    igImage((ImTextureID)(intptr_t)ppu_texture, (ImVec2){256, 240}, (ImVec2){0, 0}, (ImVec2){1, 1});
+    // Draw the CPU registers
+    igTextColored((ImVec4){1.0f, 0.0f, 0.0f, 1.0f}, "%s", "CPU Registers");
+    igText("A: 0x%02X", nes->cpu->a);
+    igText("X: 0x%02X", nes->cpu->x);
+    igText("Y: 0x%02X", nes->cpu->y);
+    igText("SP: 0x%02X", nes->cpu->sp);
+    igText("PC: 0x%04X", nes->cpu->pc);
+    igText("Status: 0x%02X", nes->cpu->status);
+    igText("Total Cycles: %llu", nes->cpu->total_cycles);
+    igText("PPU Scanline: %d", nes->ppu->scanline);
+    igText("PPU Cycle: %d", nes->ppu->cycle);
+    igText("PPU Frame Odd: %d", nes->ppu->frame_odd);
+    igText("PPU NMI Occured: %d", nes->ppu->nmi_occured);
+    igText("PPU NMI Output: %d", nes->ppu->nmi_output);
+    igText("PPU NMI Previous: %d", nes->ppu->nmi_previous);
+    igText("PPU NMI Interrupt: %d", nes->ppu->nmi_interrupt);
+    igText("PPU Framebuffer: %p", nes->ppu->framebuffer);
+    igText("PPU VRAM: %p", nes->ppu->vram);
+    igText("PPU Palette: %p", nes->ppu->palette);
+    igText("PPU OAM: %p", nes->ppu->oam);
+    igText("PPU OAM Address: %d", nes->ppu->oam_addr);
+    igText("PPU Control: %d", nes->ppu->ctrl);
+    igText("PPU Mask: %d", nes->ppu->mask);
+    igText("PPU Status: %d", nes->ppu->status);
+    igText("PPU Scroll Latch: %d", nes->ppu->scroll_latch);
+    igText("PPU Address Latch: %d", nes->ppu->addr_latch);
+    igText("PPU Scroll X: %d", nes->ppu->scroll_x);
+    igText("PPU Scroll Y: %d", nes->ppu->scroll_y);
+    igText("PPU VRAM Address: %d", nes->ppu->vram_addr);
+    igText("PPU Temp Address: %d", nes->ppu->temp_addr);
+    igText("PPU Fine X: %d", nes->ppu->fine_x);
+    igText("PPU Data Buffer: %d", nes->ppu->data_buffer);
+    igText("PPU OAM Address: %d", nes->ppu->oam_addr);
+    igText("PPU OAM Data: %d", nes->ppu->oam[nes->ppu->oam_addr]);
+    igText("PPU OAM Data Address: %d", nes->ppu->oam_addr);
+    igText("PPU OAM Data Value: %d", nes->ppu->oam[nes->ppu->oam_addr]);
+    igText("PPU OAM Data Address: %d", nes->ppu->oam_addr);
+    igText("PPU OAM Data Value: %d", nes->ppu->oam[nes->ppu->oam_addr]);
+    igText("PPU OAM Data Address: %d", nes->ppu->oam_addr);
     igEnd();
-    igShowDemoWindow(NULL);
+    //igShowDemoWindow(NULL);
 }
 
-bool ui_showDisassembler = 1;
+bool ui_showDisassembler = 0;
 
 void UI_DrawDisassembler(NES* nes) 
 {
@@ -169,22 +227,20 @@ void UI_DrawDisassembler(NES* nes)
     uint16_t next = 0;
     for (size_t i = 0; i < 16; i++)
     {
-
         igTableNextRow(0, 20);
         char disasm_buf[128];
 
 
 
-        if (next == 0)
+        if (i == 0)
         {
-            next = disassemble(nes, currentPC + i, disasm_buf, sizeof(disasm_buf));
+            next = disassemble(nes, currentPC, disasm_buf, sizeof(disasm_buf));
             igTableSetColumnIndex(0);
             igText("0x%04X", currentPC);
-        } else
-        {
-            next = disassemble(nes, next, disasm_buf, sizeof(disasm_buf));
+        } else {
             igTableSetColumnIndex(0);
             igText("0x%04X", next);
+            next = disassemble(nes, next, disasm_buf, sizeof(disasm_buf));
         }
 
 
@@ -201,7 +257,7 @@ void UI_DrawDisassembler(NES* nes)
     
 
     if(igButton("Step", (ImVec2){100,20}))
-        CPU_Step(nes->cpu);
+        NES_Step(nes);
 
     igEnd();
 }
@@ -253,10 +309,10 @@ void UI_Update(NES* nes)
         // ImGuiID dockspace_id = ImGui::GetID("MainDockArea");
         // ImGui::DockSpace(dockspace_id, ImVec2(0,0), ImGuiDockNodeFlags_None);
         // ImGui::End();
-    }
+    }    
 
     UI_Draw(nes);
-    UI_DrawDisassembler(nes);
+    if (ui_showDisassembler) UI_DrawDisassembler(nes);
 
     igRender();
     ImGui_ImplOpenGL3_RenderDrawData(igGetDrawData());

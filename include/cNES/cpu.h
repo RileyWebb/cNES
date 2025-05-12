@@ -17,6 +17,26 @@ typedef enum {
     CPU_FLAG_NEGATIVE  = (1 << 7), // Negative Flag (N)
 } CPU_StatusFlags;
 
+typedef struct CPU_Opcode {
+    enum {
+        CPU_MODE_IMPLIED,
+        CPU_MODE_ACCUMULATOR,
+        CPU_MODE_IMMEDIATE,
+        CPU_MODE_ZERO_PAGE,
+        CPU_MODE_ZERO_PAGE_X,
+        CPU_MODE_ZERO_PAGE_Y,
+        CPU_MODE_RELATIVE,
+        CPU_MODE_ABSOLUTE,
+        CPU_MODE_ABSOLUTE_X,
+        CPU_MODE_ABSOLUTE_Y,
+        CPU_MODE_INDIRECT,
+        CPU_MODE_INDEXED_INDIRECT,
+        CPU_MODE_INDIRECT_INDEXED
+    } addressing_mode;
+    const char mnemonic[5];
+    uint8_t cycles;
+} CPU_Opcode;
+
 typedef struct CPU {
     // Registers
     uint8_t a;  // Accumulator
@@ -26,18 +46,19 @@ typedef struct CPU {
     uint16_t pc; // Program Counter
     uint8_t status; // Processor Status
 
-    // Memory
     uint64_t total_cycles;
 
     NES* nes; // Pointer to the NES instance
 } CPU;
 
-//void CPU_Init(CPU* cpu);
+extern CPU_Opcode cpu_opcodes[256];
+
+CPU *CPU_Create(NES *nes);
 void CPU_Reset(CPU* cpu);
 int CPU_Step(CPU* cpu);
 
 void CPU_Interupt(CPU* cpu);
-void CPU_NMInterupt(CPU* cpu);
+void CPU_NMI(CPU* cpu);
 
 // Stack operations
 void CPU_Push(CPU* cpu, uint8_t value);
@@ -65,49 +86,5 @@ uint16_t CPU_AbsoluteY(CPU* cpu);
 uint16_t CPU_Indirect(CPU* cpu);
 uint16_t CPU_IndexedIndirect(CPU* cpu);
 uint16_t CPU_IndirectIndexed(CPU* cpu);
-
-// Opcodes
-// Load/Store Operations
-void CPU_LDA(CPU* cpu, uint16_t address);
-void CPU_LDX(CPU* cpu, uint16_t address);
-void CPU_LDY(CPU* cpu, uint16_t address);
-void CPU_STA(CPU* cpu, uint16_t address);
-void CPU_STX(CPU* cpu, uint16_t address);
-void CPU_STY(CPU* cpu, uint16_t address);
-
-// Register Transfer Operations
-void CPU_TAX(CPU* cpu);
-void CPU_TAY(CPU* cpu);
-void CPU_TXA(CPU* cpu);
-void CPU_TYA(CPU* cpu);
-void CPU_TSX(CPU* cpu);
-void CPU_TXS(CPU* cpu);
-
-// Stack Operations
-void CPU_PHA(CPU* cpu);
-void CPU_PLA(CPU* cpu);
-void CPU_PHP(CPU* cpu);
-void CPU_PLP(CPU* cpu);
-
-// Decrement/Increment Operations
-void CPU_INC(CPU* cpu, uint16_t address);
-void CPU_DEC(CPU* cpu, uint16_t address);
-void CPU_INX(CPU* cpu);
-void CPU_INY(CPU* cpu);
-void CPU_DEX(CPU* cpu);
-void CPU_DEY(CPU* cpu);
-
-// Arithmetic Operations
-void CPU_ADC(CPU* cpu, uint16_t address);
-void CPU_SBC(CPU* cpu, uint16_t address);
-
-
-
-void CPU_NOP(CPU* cpu);
-
-void CPU_JMP(CPU* cpu, uint16_t address);
-void CPU_JSR(CPU* cpu, uint16_t address);
-
-/* TODO: ADD THE REST OF THE OPCODES */
 
 #endif // CPU_H

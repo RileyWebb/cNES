@@ -1,8 +1,56 @@
 #include "debug.h"
 
+#include <stdlib.h>
+#include <string.h>
+
 #include "cNES/nes.h"
 #include "cNES/bus.h"
+#include "cNES/ppu.h"
+
 #include "cNES/cpu.h"
+
+CPU_Opcode cpu_opcodes[256] = {
+    // Opcode 0x00 - 0x0F
+    { CPU_MODE_IMPLIED, "BRK", 7 }, { CPU_MODE_INDEXED_INDIRECT, "ORA", 6 }, { CPU_MODE_IMPLIED, "KIL", 2 }, { CPU_MODE_INDEXED_INDIRECT, "SLO", 8 }, { CPU_MODE_ZERO_PAGE, "NOP", 3 }, { CPU_MODE_ZERO_PAGE, "ORA", 3 }, { CPU_MODE_ZERO_PAGE, "ASL", 5 }, { CPU_MODE_ZERO_PAGE, "SLO", 5 }, { CPU_MODE_IMPLIED, "PHP", 3 }, { CPU_MODE_IMMEDIATE, "ORA", 2 }, { CPU_MODE_ACCUMULATOR, "ASL", 2 }, { CPU_MODE_IMMEDIATE, "ANC", 2 }, { CPU_MODE_ABSOLUTE, "NOP", 4 }, { CPU_MODE_ABSOLUTE, "ORA", 4 }, { CPU_MODE_ABSOLUTE, "ASL", 6 }, { CPU_MODE_ABSOLUTE, "SLO", 6 },
+    // Opcode 0x10 - 0x1F
+    { CPU_MODE_RELATIVE, "BPL", 2 }, { CPU_MODE_INDIRECT_INDEXED, "ORA", 5 }, { CPU_MODE_IMPLIED, "KIL", 2 }, { CPU_MODE_INDIRECT_INDEXED, "SLO", 8 }, { CPU_MODE_ZERO_PAGE_X, "NOP", 4 }, { CPU_MODE_ZERO_PAGE_X, "ORA", 4 }, { CPU_MODE_ZERO_PAGE_X, "ASL", 6 }, { CPU_MODE_ZERO_PAGE_X, "SLO", 6 }, { CPU_MODE_IMPLIED, "CLC", 2 }, { CPU_MODE_ABSOLUTE_Y, "ORA", 4 }, { CPU_MODE_IMPLIED, "NOP", 2 }, { CPU_MODE_ABSOLUTE_Y, "SLO", 7 }, { CPU_MODE_ABSOLUTE_X, "NOP", 4 }, { CPU_MODE_ABSOLUTE_X, "ORA", 4 }, { CPU_MODE_ABSOLUTE_X, "ASL", 7 }, { CPU_MODE_ABSOLUTE_X, "SLO", 7 },
+    // Opcode 0x20 - 0x2F
+    { CPU_MODE_ABSOLUTE, "JSR", 6 }, { CPU_MODE_INDEXED_INDIRECT, "AND", 6 }, { CPU_MODE_IMPLIED, "KIL", 2 }, { CPU_MODE_INDEXED_INDIRECT, "RLA", 8 }, { CPU_MODE_ZERO_PAGE, "BIT", 3 }, { CPU_MODE_ZERO_PAGE, "AND", 3 }, { CPU_MODE_ZERO_PAGE, "ROL", 5 }, { CPU_MODE_ZERO_PAGE, "RLA", 5 }, { CPU_MODE_IMPLIED, "PLP", 4 }, { CPU_MODE_IMMEDIATE, "AND", 2 }, { CPU_MODE_ACCUMULATOR, "ROL", 2 }, { CPU_MODE_IMMEDIATE, "ANC", 2 }, { CPU_MODE_ABSOLUTE, "BIT", 4 }, { CPU_MODE_ABSOLUTE, "AND", 4 }, { CPU_MODE_ABSOLUTE, "ROL", 6 }, { CPU_MODE_ABSOLUTE, "RLA", 6 },
+    // Opcode 0x30 - 0x3F
+    { CPU_MODE_RELATIVE, "BMI", 2 }, { CPU_MODE_INDIRECT_INDEXED, "AND", 5 }, { CPU_MODE_IMPLIED, "KIL", 2 }, { CPU_MODE_INDIRECT_INDEXED, "RLA", 8 }, { CPU_MODE_ZERO_PAGE_X, "NOP", 4 }, { CPU_MODE_ZERO_PAGE_X, "AND", 4 }, { CPU_MODE_ZERO_PAGE_X, "ROL", 6 }, { CPU_MODE_ZERO_PAGE_X, "RLA", 6 }, { CPU_MODE_IMPLIED, "SEC", 2 }, { CPU_MODE_ABSOLUTE_Y, "AND", 4 }, { CPU_MODE_IMPLIED, "NOP", 2 }, { CPU_MODE_ABSOLUTE_Y, "RLA", 7 }, { CPU_MODE_ABSOLUTE_X, "NOP", 4 }, { CPU_MODE_ABSOLUTE_X, "AND", 4 }, { CPU_MODE_ABSOLUTE_X, "ROL", 7 }, { CPU_MODE_ABSOLUTE_X, "RLA", 7 },
+    // Opcode 0x40 - 0x4F
+    { CPU_MODE_IMPLIED, "RTI", 6 }, { CPU_MODE_INDEXED_INDIRECT, "EOR", 6 }, { CPU_MODE_IMPLIED, "KIL", 2 }, { CPU_MODE_INDEXED_INDIRECT, "SRE", 8 }, { CPU_MODE_ZERO_PAGE, "NOP", 3 }, { CPU_MODE_ZERO_PAGE, "EOR", 3 }, { CPU_MODE_ZERO_PAGE, "LSR", 5 }, { CPU_MODE_ZERO_PAGE, "SRE", 5 }, { CPU_MODE_IMPLIED, "PHA", 3 }, { CPU_MODE_IMMEDIATE, "EOR", 2 }, { CPU_MODE_ACCUMULATOR, "LSR", 2 }, { CPU_MODE_IMMEDIATE, "ALR", 2 }, { CPU_MODE_ABSOLUTE, "JMP", 3 }, { CPU_MODE_ABSOLUTE, "EOR", 4 }, { CPU_MODE_ABSOLUTE, "LSR", 6 }, { CPU_MODE_ABSOLUTE, "SRE", 6 },
+    // Opcode 0x50 - 0x5F
+    { CPU_MODE_RELATIVE, "BVC", 2 }, { CPU_MODE_INDIRECT_INDEXED, "EOR", 5 }, { CPU_MODE_IMPLIED, "KIL", 2 }, { CPU_MODE_INDIRECT_INDEXED, "SRE", 8 }, { CPU_MODE_ZERO_PAGE_X, "NOP", 4 }, { CPU_MODE_ZERO_PAGE_X, "EOR", 4 }, { CPU_MODE_ZERO_PAGE_X, "LSR", 6 }, { CPU_MODE_ZERO_PAGE_X, "SRE", 6 }, { CPU_MODE_IMPLIED, "CLI", 2 }, { CPU_MODE_ABSOLUTE_Y, "EOR", 4 }, { CPU_MODE_IMPLIED, "NOP", 2 }, { CPU_MODE_ABSOLUTE_Y, "SRE", 7 }, { CPU_MODE_ABSOLUTE_X, "NOP", 4 }, { CPU_MODE_ABSOLUTE_X, "EOR", 4 }, { CPU_MODE_ABSOLUTE_X, "LSR", 7 }, { CPU_MODE_ABSOLUTE_X, "SRE", 7 },
+    // Opcode 0x60 - 0x6F
+    { CPU_MODE_IMPLIED, "RTS", 6 }, { CPU_MODE_INDEXED_INDIRECT, "ADC", 6 }, { CPU_MODE_IMPLIED, "KIL", 2 }, { CPU_MODE_INDEXED_INDIRECT, "RRA", 8 }, { CPU_MODE_ZERO_PAGE, "NOP", 3 }, { CPU_MODE_ZERO_PAGE, "ADC", 3 }, { CPU_MODE_ZERO_PAGE, "ROR", 5 }, { CPU_MODE_ZERO_PAGE, "RRA", 5 }, { CPU_MODE_IMPLIED, "PLA", 4 }, { CPU_MODE_IMMEDIATE, "ADC", 2 }, { CPU_MODE_ACCUMULATOR, "ROR", 2 }, { CPU_MODE_IMMEDIATE, "ARR", 2 }, { CPU_MODE_INDIRECT, "JMP", 5 }, { CPU_MODE_ABSOLUTE, "ADC", 4 }, { CPU_MODE_ABSOLUTE, "ROR", 6 }, { CPU_MODE_ABSOLUTE, "RRA", 6 },
+    // Opcode 0x70 - 0x7F
+    { CPU_MODE_RELATIVE, "BVS", 2 }, { CPU_MODE_INDIRECT_INDEXED, "ADC", 5 }, { CPU_MODE_IMPLIED, "KIL", 2 }, { CPU_MODE_INDIRECT_INDEXED, "RRA", 8 }, { CPU_MODE_ZERO_PAGE_X, "NOP", 4 }, { CPU_MODE_ZERO_PAGE_X, "ADC", 4 }, { CPU_MODE_ZERO_PAGE_X, "ROR", 6 }, { CPU_MODE_ZERO_PAGE_X, "RRA", 6 }, { CPU_MODE_IMPLIED, "SEI", 2 }, { CPU_MODE_ABSOLUTE_Y, "ADC", 4 }, { CPU_MODE_IMPLIED, "NOP", 2 }, { CPU_MODE_ABSOLUTE_Y, "RRA", 7 }, { CPU_MODE_ABSOLUTE_X, "NOP", 4 }, { CPU_MODE_ABSOLUTE_X, "ADC", 4 }, { CPU_MODE_ABSOLUTE_X, "ROR", 7 }, { CPU_MODE_ABSOLUTE_X, "RRA", 7 },
+    // Opcode 0x80 - 0x8F
+    { CPU_MODE_IMMEDIATE, "NOP", 2 }, { CPU_MODE_INDEXED_INDIRECT, "STA", 6 }, { CPU_MODE_IMMEDIATE, "NOP", 2 }, { CPU_MODE_INDEXED_INDIRECT, "SAX", 6 }, { CPU_MODE_ZERO_PAGE, "STY", 3 }, { CPU_MODE_ZERO_PAGE, "STA", 3 }, { CPU_MODE_ZERO_PAGE, "STX", 3 }, { CPU_MODE_ZERO_PAGE, "SAX", 3 }, { CPU_MODE_IMPLIED, "DEY", 2 }, { CPU_MODE_IMPLIED, "NOP", 2 }, { CPU_MODE_IMPLIED, "TXA", 2 }, { CPU_MODE_IMMEDIATE, "XAA", 2 }, { CPU_MODE_ABSOLUTE, "STY", 4 }, { CPU_MODE_ABSOLUTE, "STA", 4 }, { CPU_MODE_ABSOLUTE, "STX", 4 }, { CPU_MODE_ABSOLUTE, "SAX", 4 },
+    // Opcode 0x90 - 0x9F
+    { CPU_MODE_RELATIVE, "BCC", 2 }, { CPU_MODE_INDIRECT_INDEXED, "STA", 6 }, { CPU_MODE_IMPLIED, "KIL", 2 }, { CPU_MODE_INDIRECT_INDEXED, "AHX", 6 }, { CPU_MODE_ZERO_PAGE_X, "STY", 4 }, { CPU_MODE_ZERO_PAGE_X, "STA", 4 }, { CPU_MODE_ZERO_PAGE_Y, "STX", 4 }, { CPU_MODE_ZERO_PAGE_Y, "SAX", 4 }, { CPU_MODE_IMPLIED, "TYA", 2 }, { CPU_MODE_ABSOLUTE_Y, "STA", 5 }, { CPU_MODE_IMPLIED, "TXS", 2 }, { CPU_MODE_ABSOLUTE_Y, "TAS", 5 }, { CPU_MODE_ABSOLUTE_X, "SHY", 5 }, { CPU_MODE_ABSOLUTE_X, "STA", 5 }, { CPU_MODE_ABSOLUTE_Y, "SHX", 5 }, { CPU_MODE_ABSOLUTE_Y, "AHX", 5 },
+    // Opcode 0xA0 - 0xAF
+    { CPU_MODE_IMMEDIATE, "LDY", 2 }, { CPU_MODE_INDEXED_INDIRECT, "LDA", 6 }, { CPU_MODE_IMMEDIATE, "LDX", 2 }, { CPU_MODE_INDEXED_INDIRECT, "LAX", 6 }, { CPU_MODE_ZERO_PAGE, "LDY", 3 }, { CPU_MODE_ZERO_PAGE, "LDA", 3 }, { CPU_MODE_ZERO_PAGE, "LDX", 3 }, { CPU_MODE_ZERO_PAGE, "LAX", 3 }, { CPU_MODE_IMPLIED, "TAY", 2 }, { CPU_MODE_IMMEDIATE, "LDA", 2 }, { CPU_MODE_IMPLIED, "TAX", 2 }, { CPU_MODE_IMMEDIATE, "LAX", 2 }, { CPU_MODE_ABSOLUTE, "LDY", 4 }, { CPU_MODE_ABSOLUTE, "LDA", 4 }, { CPU_MODE_ABSOLUTE, "LDX", 4 }, { CPU_MODE_ABSOLUTE, "LAX", 4 },
+    // Opcode 0xB0 - 0xBF
+    { CPU_MODE_RELATIVE, "BCS", 2 }, { CPU_MODE_INDIRECT_INDEXED, "LDA", 5 }, { CPU_MODE_IMPLIED, "KIL", 2 }, { CPU_MODE_INDIRECT_INDEXED, "LAX", 5 }, { CPU_MODE_ZERO_PAGE_X, "LDY", 4 }, { CPU_MODE_ZERO_PAGE_X, "LDA", 4 }, { CPU_MODE_ZERO_PAGE_Y, "LDX", 4 }, { CPU_MODE_ZERO_PAGE_Y, "LAX", 4 }, { CPU_MODE_IMPLIED, "CLV", 2 }, { CPU_MODE_ABSOLUTE_Y, "LDA", 4 }, { CPU_MODE_IMPLIED, "TSX", 2 }, { CPU_MODE_ABSOLUTE_Y, "LAS", 4 }, { CPU_MODE_ABSOLUTE_X, "LDY", 4 }, { CPU_MODE_ABSOLUTE_X, "LDA", 4 }, { CPU_MODE_ABSOLUTE_Y, "LDX", 4 }, { CPU_MODE_ABSOLUTE_Y, "LAX", 4 },
+    // Opcode 0xC0 - 0xCF
+    { CPU_MODE_IMMEDIATE, "CPY", 2 }, { CPU_MODE_INDEXED_INDIRECT, "CMP", 6 }, { CPU_MODE_IMPLIED, "NOP", 2 }, { CPU_MODE_INDEXED_INDIRECT, "DCP", 8 }, { CPU_MODE_ZERO_PAGE, "CPY", 3 }, { CPU_MODE_ZERO_PAGE, "CMP", 3 }, { CPU_MODE_ZERO_PAGE, "DEC", 5 }, { CPU_MODE_ZERO_PAGE, "DCP", 5 }, { CPU_MODE_IMPLIED, "INY", 2 }, { CPU_MODE_IMMEDIATE, "CMP", 2 }, { CPU_MODE_IMPLIED, "DEX", 2 }, { CPU_MODE_IMMEDIATE, "AXS", 2 }, { CPU_MODE_ABSOLUTE, "CPY", 4 }, { CPU_MODE_ABSOLUTE, "CMP", 4 }, { CPU_MODE_ABSOLUTE, "DEC", 6 }, { CPU_MODE_ABSOLUTE, "DCP", 6 },
+    // Opcode 0xD0 - 0xDF
+    { CPU_MODE_RELATIVE, "BNE", 2 }, { CPU_MODE_INDIRECT_INDEXED, "CMP", 5 }, { CPU_MODE_IMPLIED, "KIL", 2 }, { CPU_MODE_INDIRECT_INDEXED, "DCP", 8 }, { CPU_MODE_ZERO_PAGE_X, "NOP", 4 }, { CPU_MODE_ZERO_PAGE_X, "CMP", 4 }, { CPU_MODE_ZERO_PAGE_X, "DEC", 6 }, { CPU_MODE_ZERO_PAGE_X, "DCP", 6 }, { CPU_MODE_IMPLIED, "CLD", 2 }, { CPU_MODE_ABSOLUTE_Y, "CMP", 4 }, { CPU_MODE_IMPLIED, "NOP", 2 }, { CPU_MODE_ABSOLUTE_Y, "DCP", 7 }, { CPU_MODE_ABSOLUTE_X, "NOP", 4 }, { CPU_MODE_ABSOLUTE_X, "CMP", 4 }, { CPU_MODE_ABSOLUTE_X, "DEC", 7 }, { CPU_MODE_ABSOLUTE_X, "DCP", 7 },
+    // Opcode 0xE0 - 0xEF
+    { CPU_MODE_IMMEDIATE, "CPX", 2 }, { CPU_MODE_INDEXED_INDIRECT, "SBC", 6 }, { CPU_MODE_IMMEDIATE, "NOP", 2 }, { CPU_MODE_INDEXED_INDIRECT, "ISC", 8 }, { CPU_MODE_ZERO_PAGE, "CPX", 3 }, { CPU_MODE_ZERO_PAGE, "SBC", 3 }, { CPU_MODE_ZERO_PAGE, "INC", 5 }, { CPU_MODE_ZERO_PAGE, "ISC", 5 }, { CPU_MODE_IMPLIED, "INX", 2 }, { CPU_MODE_IMMEDIATE, "SBC", 2 }, { CPU_MODE_IMPLIED, "NOP", 2 }, { CPU_MODE_IMMEDIATE, "SBC", 2 }, { CPU_MODE_ABSOLUTE, "CPX", 4 }, { CPU_MODE_ABSOLUTE, "SBC", 4 }, { CPU_MODE_ABSOLUTE, "INC", 6 }, { CPU_MODE_ABSOLUTE, "ISC", 6 },
+    // Opcode 0xF0 - 0xFF
+    { CPU_MODE_RELATIVE, "BEQ", 2 }, { CPU_MODE_INDIRECT_INDEXED, "SBC", 5 }, { CPU_MODE_IMPLIED, "KIL", 2 }, { CPU_MODE_INDIRECT_INDEXED, "ISC", 8 }, { CPU_MODE_ZERO_PAGE_X, "NOP", 4 }, { CPU_MODE_ZERO_PAGE_X, "SBC", 4 }, { CPU_MODE_ZERO_PAGE_X, "INC", 6 }, { CPU_MODE_ZERO_PAGE_X, "ISC", 6 }, { CPU_MODE_IMPLIED, "SED", 2 }, { CPU_MODE_ABSOLUTE_Y, "SBC", 4 }, { CPU_MODE_IMPLIED, "NOP", 2 }, { CPU_MODE_ABSOLUTE_Y, "ISC", 7 }, { CPU_MODE_ABSOLUTE_X, "NOP", 4 }, { CPU_MODE_ABSOLUTE_X, "SBC", 4 }, { CPU_MODE_ABSOLUTE_X, "INC", 7 }, { CPU_MODE_ABSOLUTE_X, "ISC", 7 },
+};
+
+CPU *CPU_Create(NES *nes) 
+{
+    CPU *cpu = malloc(sizeof(CPU));
+    memset(cpu, 0, sizeof(CPU)); // Initialize CPU structure to zero
+    cpu->nes = nes;
+    return cpu;
+}
 
 void CPU_Reset(CPU *cpu) 
 {
@@ -28,16 +76,17 @@ uint8_t CPU_Pop(CPU *cpu)
     return cpu->nes->bus->memory[0x0100 + cpu->sp]; // Pop from stack
 }
 
+// Correct 6502 stack push/pop order: low byte first, then high byte
 void CPU_Push16(CPU *cpu, uint16_t value) 
 {
+    CPU_Push(cpu, (uint8_t)(value & 0xFF)); // Low byte first
     CPU_Push(cpu, (uint8_t)(value >> 8));   // High byte
-    CPU_Push(cpu, (uint8_t)(value & 0xFF)); // Low byte
 }
 
 uint16_t CPU_Pop16(CPU *cpu) 
 {
-    uint8_t lo = CPU_Pop(cpu);
-    uint8_t hi = CPU_Pop(cpu);
+    uint8_t hi = CPU_Pop(cpu); // High byte second
+    uint8_t lo = CPU_Pop(cpu); // Low byte first
     return (uint16_t)lo | ((uint16_t)hi << 8);
 }
 
@@ -315,18 +364,19 @@ void CPU_ADC(CPU *cpu, uint16_t address)
 
 void CPU_SBC(CPU *cpu, uint16_t address) 
 {
-    uint16_t operand = BUS_Read(cpu->nes, address) ^ 0x00FF; // Read operand from memory
-    uint8_t carry = CPU_GetFlag(cpu, CPU_FLAG_CARRY) ? 1 : 0; // Get carry flag
-    uint16_t sum = (uint16_t)((uint32_t)cpu->a + (uint32_t)operand + (uint32_t)carry); // Calculate sum
+    uint8_t operand = BUS_Read(cpu->nes, address);
+    uint8_t value = operand ^ 0xFF; // Invert for subtraction
+    uint8_t carry = CPU_GetFlag(cpu, CPU_FLAG_CARRY) ? 1 : 0;
+    uint16_t sum = (uint16_t)((int)cpu->a + (int)value + (int)carry);
 
-    // Set carry flag if no borrow occurs
-    CPU_SetFlag(cpu, CPU_FLAG_CARRY, sum & 0xFF00);
+    // Set carry flag if result >= 0x100 (no borrow)
+    CPU_SetFlag(cpu, CPU_FLAG_CARRY, sum > 0xFF);
 
-    // Set overflow flag if the sign of the result is different from the sign of the operands
-    CPU_SetFlag(cpu, CPU_FLAG_OVERFLOW, (sum ^ (uint16_t)cpu->a) & (sum ^ operand) & 0x0080);
+    // Set overflow flag if sign bit changes incorrectly
+    CPU_SetFlag(cpu, CPU_FLAG_OVERFLOW, ((cpu->a ^ sum) & (value ^ sum) & 0x80) != 0);
 
-    cpu->a = (uint8_t)(sum & 0xFF); // Store result in A
-    CPU_UpdateZeroNegativeFlags(cpu, cpu->a); // Update flags
+    cpu->a = (uint8_t)(sum & 0xFF);
+    CPU_UpdateZeroNegativeFlags(cpu, cpu->a);
 }
 
 // Shift Operations
@@ -679,18 +729,15 @@ void CPU_AYX(CPU *cpu, uint16_t address)
 
 void CPU_ARR(CPU *cpu, uint16_t address) 
 {
-    uint8_t value = BUS_Read(cpu->nes, address); // Read value from memory
-    uint8_t carry = CPU_GetFlag(cpu, CPU_FLAG_CARRY) ? 1 : 0; // Get carry flag
-    uint16_t sum = (uint16_t)((uint32_t)cpu->a + (uint32_t)value + (uint32_t)carry); // Calculate sum
+    // ARR: AND then ROR A, set flags in a special way
+    uint8_t value = BUS_Read(cpu->nes, address);
+    cpu->a &= value;
+    cpu->a = (cpu->a >> 1) | (CPU_GetFlag(cpu, CPU_FLAG_CARRY) ? 0x80 : 0x00);
 
-    // Set carry flag if overflow occurs
-    CPU_SetFlag(cpu, CPU_FLAG_CARRY, sum > 0xFF);
-
-    // Set overflow flag if the sign of the result is different from the sign of the operands
-    CPU_SetFlag(cpu, CPU_FLAG_OVERFLOW, ((~(cpu->a ^ value) & (cpu->a ^ (uint8_t)(sum & 0xFF))) & 0x80) != 0);
-
-    cpu->a = (uint8_t)(sum & 0xFF); // Store result in A
-    CPU_UpdateZeroNegativeFlags(cpu, cpu->a); // Update flags
+    CPU_UpdateZeroNegativeFlags(cpu, cpu->a);
+    // Set carry to bit 6, overflow to bit 6 xor bit 5
+    CPU_SetFlag(cpu, CPU_FLAG_CARRY, (cpu->a & 0x40) != 0);
+    CPU_SetFlag(cpu, CPU_FLAG_OVERFLOW, ((cpu->a & 0x40) ^ ((cpu->a & 0x20) << 1)) != 0);
 }
 
 void CPU_SLO(CPU *cpu, uint16_t address) 
@@ -797,41 +844,43 @@ void CPU_SBX(CPU *cpu, uint16_t address)
 void CPU_SHY(CPU *cpu, uint16_t address) 
 {
     // Store Y & (high byte of address + 1) (fixed)
-    uint8_t value = cpu->y & ((address >> 8) + 1);
+    uint8_t value = (uint8_t)(cpu->y & ((uint8_t)((address >> 8) + 1)));
     BUS_Write(cpu->nes, address, value);
 }
 
 void CPU_SHX(CPU *cpu, uint16_t address) 
 {
     // Store X & (high byte of address + 1) (fixed)
-    uint8_t value = cpu->x & ((address >> 8) + 1);
+    uint8_t value = (uint8_t)(cpu->x & ((uint8_t)((address >> 8) + 1)));
     BUS_Write(cpu->nes, address, value);
 }
 
 void CPU_LAS(CPU *cpu, uint16_t address) 
 {
-    uint8_t value = BUS_Read(cpu->nes, address); // Read value from memory
-    cpu->a &= value; // AND A with memory
-    cpu->x = cpu->a; // Transfer A to X
-    cpu->y = cpu->a; // Transfer A to Y
-    CPU_UpdateZeroNegativeFlags(cpu, cpu->a); // Update flags
+    // LAS: Mem & SP -> A, X, SP
+    uint8_t value = BUS_Read(cpu->nes, address) & cpu->sp;
+    cpu->a = value;
+    cpu->x = value;
+    cpu->sp = value;
+    CPU_UpdateZeroNegativeFlags(cpu, value);
 }
 
 void CPU_TAS(CPU *cpu) 
 {
-    cpu->sp = cpu->a; // Transfer A to SP
-    CPU_UpdateZeroNegativeFlags(cpu, cpu->sp); // Update flags
+    // TAS: SP = A & X
+    cpu->sp = cpu->a & cpu->x;
+    // No flags affected
 }
 
 int CPU_Step(CPU *cpu) 
 {
+    uint16_t addr = 0; // Effective address for operand
+    uint64_t cycles = 2;    // Default cycles (most common)
+
     uint16_t initial_pc = cpu->pc; // For debugging/logging
     
     uint8_t opcode = BUS_Read(cpu->nes, cpu->pc);
     cpu->pc++; // Increment PC past opcode
-
-    uint16_t addr = 0; // Effective address for operand
-    int cycles = 2;    // Default cycles (most common)
 
     switch (opcode) 
     {
@@ -1323,5 +1372,5 @@ int CPU_Step(CPU *cpu)
 
     // TODO: Add accurate cycle calculation logic here based on page crossings, branches taken, etc.
     cpu->total_cycles += cycles;
-    return cycles;
+    return (int)cycles;
 }

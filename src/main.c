@@ -1,12 +1,3 @@
-//#include <SDL2/SDL.h>
-//#define SDL_MAIN_HANDLED
-
-
-//SDL_Window *window;
-//SDL_GLContext *glContext;
-
-//ImGuiIO* ioptr;
-
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
@@ -16,11 +7,9 @@
 
 #include "ui.h"
 #include "cNES/cpu.h"
+#include "cNES/ppu.h"
 #include "cNES/bus.h"
 #include "cNES/nes.h"
-
-#define NESTEST_COMPLETION_PC 0xC6A0
-#define MAX_NESTEST_INSTRUCTIONS 30000
 
 int main(int argc, char **argv)
 {
@@ -33,7 +22,7 @@ int main(int argc, char **argv)
 
     NES* nes = NES_Create();
 
-    NES_Load("tests/nestest.nes", nes);
+    NES_Load("Super Mario Bros..nes", nes);
 
     //CPU_Reset(cpu); // Reset CPU to initial state
     nes->cpu->pc = 0xC000;
@@ -42,7 +31,14 @@ int main(int argc, char **argv)
 
     for (;;)
     {
+        while (!nes->ppu->nmi_occured)
+            NES_Step(nes);
+
         UI_Update(nes);
+
+        while (nes->ppu->nmi_occured)
+            NES_Step(nes);
+        
     }
 
     DEBUG_INFO("Closing cNES");
