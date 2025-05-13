@@ -7,7 +7,3 @@
 [submodule "ext/cimplot"]
 	path = ext/cimplot
 	url = https://github.com/cimgui/cimplot
-[submodule "ext/SDL"]
-	path = ext/SDL
-	url = https://github.com/libsdl-org/SDL/
-	branch = SDL2
