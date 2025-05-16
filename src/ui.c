@@ -1,16 +1,16 @@
 #define CIMGUI_DEFINE_ENUMS_AND_STRUCTS
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_gpu.h> // Primary header for SDL_gpu
 #include <cimgui.h>
-#include <cimgui_impl.h>
-#include <cimplot.h> // REFACTOR-NOTE: Included, but not explicitly used in UI functions. Ensure it's needed or remove.
-#include <GL/glew.h>
-#include <SDL3/SDL_opengl.h>
+#include <cimgui_impl.h> // For ImGui_ImplSDL3_ and ImGui_ImplSDLGPU3_
+#include <cimplot.h>     // REFACTOR-NOTE: Included, but not explicitly used in UI functions. Kept for now in case of future use.
 #include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_messagebox.h>
-#include <stdio.h> // For vsnprintf, snprintf
+#include <stdio.h>  // For vsnprintf, snprintf
 #include <string.h> // For strncpy, strcmp, strrchr
 #include <stdarg.h> // For va_list
 #include <float.h>  // For FLT_MIN
+#include <time.h>   // For logging timestamp
 
 #include "debug.h"
 #include "cNES/nes.h"
@@ -21,25 +21,23 @@
 
 #include "ui.h"
 
+// --- SDL and ImGui Globals ---
 SDL_Window *window;
-SDL_GLContext glContext;
-
+SDL_GPUDevice* gpu_device;
 ImGuiIO* ioptr;
+ImVec4 clear_color; // Clear color for the swapchain
 
 // --- UI State ---
 static bool ui_showPpuViewer = true;
-static bool ui_showLog = true; // REFACTOR-NOTE: Defaulting to true for better initial layout visibility
+static bool ui_showLog = true;
 static bool ui_paused = true;
-//static bool ui_openRomModal = false; // REFACTOR-NOTE: Replaced by SDL file dialog
 static bool ui_showMemoryViewer = true;
 static bool ui_showSettingsWindow = false;
 static char ui_romPath[256] = "";
 static char ui_currentRomName[256] = "No ROM Loaded";
-static char ui_logBuffer[4096] = ""; // REFACTOR-NOTE: Consider a more dynamic buffer or circular buffer for extensive logging.
+static char ui_logBuffer[8192] = ""; // REFACTOR-NOTE: Increased buffer size. Consider a circular buffer for very extensive logging.
 static int ui_logLen = 0;
-static Uint32 lastFrameTime = 0;
 static float ui_fps = 0.0f;
-//static float ui_fps_display = 0.0f; // FPS for status bar display
 static UI_Theme current_ui_theme = UI_THEME_DARK;
 static float ui_master_volume = 0.8f;
 static bool ui_sdl_fullscreen = false;
@@ -56,55 +54,69 @@ static int ui_selectedSaveLoadSlot = 0;
 static uint8_t nes_input_state[2] = {0, 0};
 
 static bool ui_showCpuWindow = true;
-// static bool ui_showPpuWindow = false; // REFACTOR-NOTE: Merged into PPU Viewer
 static bool ui_showToolbar = true;
 static bool ui_showDisassembler = true;
-static bool ui_showGameScreen = true;
+static bool ui_showGameScreen = true; // REFACTOR-NOTE: Game screen is now a dockable window.
 
-// REFACTOR-NOTE: Flag to ensure default docking layout is applied only once.
-static bool ui_first_frame = true;
+static bool ui_first_frame = true; // Flag for applying default docking layout
+
+// --- PPU Viewer SDL_gpu Resources ---
+static SDL_GPUTexture* pt_texture0 = NULL;
+static SDL_GPUTexture* pt_texture1 = NULL;
+static SDL_GPUSampler* pt_sampler = NULL; // Single sampler can be used for both pattern table textures
+static SDL_GPUTransferBuffer* pt_transfer_buffer = NULL; // Single transfer buffer can be reused
+
+// --- Game Screen SDL_gpu Resources ---
+static SDL_GPUTexture* ppu_game_texture = NULL;
+static SDL_GPUSampler* ppu_game_sampler = NULL;
+static SDL_GPUTransferBuffer* ppu_game_transfer_buffer = NULL; // Renamed to avoid conflict
 
 // --- Helper: Append to log ---
 void UI_Log(const char* fmt, ...) {
-    // REFACTOR-NOTE: Added basic timestamp. Customize as needed.
-    // char time_buf[32];
-    // time_t now = time(NULL);
-    // strftime(time_buf, sizeof(time_buf), "%H:%M:%S ", localtime(&now));
-    // int time_len = strlen(time_buf);
-    // if (ui_logLen + time_len < (int)sizeof(ui_logBuffer) -1) {
-    //     strncpy(ui_logBuffer + ui_logLen, time_buf, sizeof(ui_logBuffer) - ui_logLen -1);
-    //     ui_logLen += time_len;
-    // }
+    char time_buf[32];
+    time_t now_time = time(NULL);
+    struct tm *tm_info = localtime(&now_time); // REFACTOR-NOTE: Using localtime for human-readable time.
+    strftime(time_buf, sizeof(time_buf), "%H:%M:%S ", tm_info);
+    int time_len = strlen(time_buf);
+
+    int remaining_buf_space = sizeof(ui_logBuffer) - ui_logLen - 1; // -1 for null terminator
+
+    if (time_len < remaining_buf_space) {
+        strncpy(ui_logBuffer + ui_logLen, time_buf, remaining_buf_space);
+        ui_logLen += time_len;
+        remaining_buf_space -= time_len;
+    }
 
     va_list args;
     va_start(args, fmt);
-    int n = vsnprintf(ui_logBuffer + ui_logLen, sizeof(ui_logBuffer) - ui_logLen -1, fmt, args); // -1 for null terminator
+    int n = vsnprintf(ui_logBuffer + ui_logLen, remaining_buf_space, fmt, args);
     va_end(args);
 
     if (n > 0) {
         ui_logLen += n;
-        // Ensure there's always a newline if the message doesn't have one, and space for it.
         if (ui_logLen > 0 && ui_logBuffer[ui_logLen-1] != '\n' && ui_logLen < (int)sizeof(ui_logBuffer) - 2) {
             ui_logBuffer[ui_logLen++] = '\n';
         }
-        ui_logBuffer[ui_logLen] = '\0'; // Ensure null termination
+        ui_logBuffer[ui_logLen] = '\0';
     }
     
-    // Simple wrap-around if buffer is full (very basic, could lose messages)
-    if (ui_logLen >= (int)sizeof(ui_logBuffer) - (128 * 2) ) { // Keep some buffer if close to full
-         DEBUG_WARN("Log buffer full, consider increasing size or implementing circular buffer.");
-         // To prevent overflow, one could clear or implement a circular buffer here.
-         // For simplicity now, let's just prevent writing past the buffer.
-         // A more robust solution would be a circular buffer.
-         // For now, just reset if it gets too full to avoid issues.
-         // ui_logLen = 0; // Or, shift content.
+    if (ui_logLen >= (int)sizeof(ui_logBuffer) - 512 ) { // Keep some buffer if close to full
+         DEBUG_WARN("Log buffer nearing capacity. Consider increasing size or implementing circular buffer.");
+         // Basic wrap-around: clear half the log to make space
+         int half_len = ui_logLen / 2;
+         memmove(ui_logBuffer, ui_logBuffer + half_len, ui_logLen - half_len);
+         ui_logLen -= half_len;
+         ui_logBuffer[ui_logLen] = '\0';
+         UI_Log("Log buffer was cleared partially to make space.");
     }
 }
 
 // --- Helper: Add to Recent ROMs ---
 static void UI_AddRecentRom(const char* path) {
+    // Check if path already exists
     for (int i = 0; i < ui_recentRomsCount; ++i) {
         if (strcmp(ui_recentRoms[i], path) == 0) {
+            // If it exists and not at the top, move to top
             if (i > 0) {
                 char temp[256];
                 strncpy(temp, ui_recentRoms[i], 255);
@@ -116,22 +128,25 @@ static void UI_AddRecentRom(const char* path) {
                 strncpy(ui_recentRoms[0], temp, 255);
                 ui_recentRoms[0][255] = '\0';
             }
-            return;
+            return; // Done
         }
     }
 
+    // Path not found, add to top
     if (ui_recentRomsCount < UI_MAX_RECENT_ROMS) {
+        // Shift existing entries down
         for (int i = ui_recentRomsCount; i > 0; --i) {
             strncpy(ui_recentRoms[i], ui_recentRoms[i-1], 255);
             ui_recentRoms[i][255] = '\0';
         }
         ui_recentRomsCount++;
-    } else { // Max count reached, shift oldest
+    } else { // Max count reached, shift oldest out
         for (int i = UI_MAX_RECENT_ROMS - 1; i > 0; --i) {
             strncpy(ui_recentRoms[i], ui_recentRoms[i-1], 255);
             ui_recentRoms[i][255] = '\0';
         }
     }
+    // Add new path at the top
     strncpy(ui_recentRoms[0], path, 255);
     ui_recentRoms[0][255] = '\0';
 }
@@ -140,7 +155,7 @@ void UI_LoadRom(NES* nes, const char* path) {
     if (NES_Load(path, nes) == 0) {
         UI_Log("Successfully loaded ROM: %s", path);
         const char* filename = strrchr(path, '/');
-        if (!filename) filename = strrchr(path, '\\'); // Handle Windows paths
+        if (!filename) filename = strrchr(path, '\\');
         if (filename) strncpy(ui_currentRomName, filename + 1, sizeof(ui_currentRomName) - 1);
         else strncpy(ui_currentRomName, path, sizeof(ui_currentRomName) - 1);
         ui_currentRomName[sizeof(ui_currentRomName) - 1] = '\0';
@@ -155,44 +170,55 @@ void UI_LoadRom(NES* nes, const char* path) {
 }
 
 void UI_Reset(NES* nes) {
-    NES_Reset(nes);
-    UI_Log("NES Reset");
+    if (nes) { // REFACTOR-NOTE: Added null check for safety
+        NES_Reset(nes);
+        UI_Log("NES Reset");
+    } else {
+        UI_Log("Cannot reset: No NES context.");
+    }
 }
 
 void UI_StepFrame(NES* nes) {
-    NES_StepFrame(nes);
-    UI_Log("Stepped one frame");
+    if (nes) { // REFACTOR-NOTE: Added null check
+        NES_StepFrame(nes);
+        UI_Log("Stepped one frame");
+    } else {
+        UI_Log("Cannot step frame: No NES context.");
+    }
 }
 
-void UI_TogglePause(NES* nes) {
+void UI_TogglePause(NES* nes) { // REFACTOR-NOTE: NES context not strictly needed here, but good for consistency if actions depend on it.
     ui_paused = !ui_paused;
     UI_Log(ui_paused ? "Emulation Paused" : "Emulation Resumed");
 }
 
 static void UI_HandleInputEvent(const SDL_Event* e) {
     int pressed = (e->type == SDL_EVENT_KEY_DOWN);
+    // Standard NES controller mapping (A, B, Select, Start, Up, Down, Left, Right)
     switch (e->key.key) {
-        case SDLK_D: nes_input_state[0] = pressed ? (nes_input_state[0] | 0x01) : (nes_input_state[0] & ~0x01); break;
-        case SDLK_A: nes_input_state[0] = pressed ? (nes_input_state[0] | 0x02) : (nes_input_state[0] & ~0x02); break;
-        case SDLK_S: nes_input_state[0] = pressed ? (nes_input_state[0] | 0x04) : (nes_input_state[0] & ~0x04); break;
-        case SDLK_W: nes_input_state[0] = pressed ? (nes_input_state[0] | 0x08) : (nes_input_state[0] & ~0x08); break;
-        case SDLK_RETURN: nes_input_state[0] = pressed ? (nes_input_state[0] | 0x10) : (nes_input_state[0] & ~0x10); break;
-        case SDLK_RSHIFT: case SDLK_LSHIFT: nes_input_state[0] = pressed ? (nes_input_state[0] | 0x20) : (nes_input_state[0] & ~0x20); break;
-        case SDLK_J: nes_input_state[0] = pressed ? (nes_input_state[0] | 0x40) : (nes_input_state[0] & ~0x40); break;
-        case SDLK_K: nes_input_state[0] = pressed ? (nes_input_state[0] | 0x80) : (nes_input_state[0] & ~0x80); break;
+        // Player 1
+        case SDLK_K:      nes_input_state[0] = pressed ? (nes_input_state[0] | 0x01) : (nes_input_state[0] & ~0x01); break; // A
+        case SDLK_J:      nes_input_state[0] = pressed ? (nes_input_state[0] | 0x02) : (nes_input_state[0] & ~0x02); break; // B
+        case SDLK_RSHIFT: nes_input_state[0] = pressed ? (nes_input_state[0] | 0x04) : (nes_input_state[0] & ~0x04); break; // Select
+        case SDLK_RETURN: nes_input_state[0] = pressed ? (nes_input_state[0] | 0x08) : (nes_input_state[0] & ~0x08); break; // Start
+        case SDLK_W:      nes_input_state[0] = pressed ? (nes_input_state[0] | 0x10) : (nes_input_state[0] & ~0x10); break; // Up
+        case SDLK_S:      nes_input_state[0] = pressed ? (nes_input_state[0] | 0x20) : (nes_input_state[0] & ~0x20); break; // Down
+        case SDLK_A:      nes_input_state[0] = pressed ? (nes_input_state[0] | 0x40) : (nes_input_state[0] & ~0x40); break; // Left
+        case SDLK_D:      nes_input_state[0] = pressed ? (nes_input_state[0] | 0x80) : (nes_input_state[0] & ~0x80); break; // Right
+        // REFACTOR-NOTE: Add Player 2 controls if desired
         default: break;
     }
 }
 
 static const SDL_DialogFileFilter filters[] = {
-    { "NES ROMs",  "nes;fds;unif;nes2;ines" }, // REFACTOR-NOTE: Combined common ROM types
-    { "Archives", "zip;7z;rar" },
+    { "NES ROMs",  "nes;fds;unif;nes2;ines" },
+    { "Archives", "zip;7z;rar" }, // REFACTOR-NOTE: Archive handling would need external libraries. This filter is just for selection.
     { "All files",   "*" }
 };
 
 static void SDLCALL FileDialogCallback(void* userdata, const char* const* filelist, int filter_index) {
     if (!filelist || !*filelist) {
-        if (SDL_GetError() && strlen(SDL_GetError()) > 0) { // Check if there's an actual error message
+        if (SDL_GetError() && strlen(SDL_GetError()) > 0) {
             DEBUG_ERROR("SDL File Dialog Error: %s", SDL_GetError());
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "File Dialog Error", SDL_GetError(), window);
         } else {
@@ -201,7 +227,7 @@ static void SDLCALL FileDialogCallback(void* userdata, const char* const* fileli
         return;
     }
 
-    const char* selected_file = *filelist; // Only one file due to `allow_many = false`
+    const char* selected_file = *filelist;
     if (selected_file) {
         UI_Log("File selected via dialog: %s", selected_file);
         strncpy(ui_romPath, selected_file, sizeof(ui_romPath) -1);
@@ -211,16 +237,14 @@ static void SDLCALL FileDialogCallback(void* userdata, const char* const* fileli
 }
 
 void UI_DrawFileMenu(NES* nes) {
-    // REFACTOR-NOTE: Consider adding icons to menu items (e.g., using FontAwesome)
     if (igBeginMenu("File", true)) {
         if (igMenuItem_Bool("Open ROM...", "Ctrl+O", false, true)) {
-             SDL_ShowOpenFileDialog(FileDialogCallback, nes, window, filters, SDL_arraysize(filters), NULL, false); // allow_many = false
+             SDL_ShowOpenFileDialog(FileDialogCallback, nes, window, filters, SDL_arraysize(filters), NULL, false);
         }
 
         if (igBeginMenu("Recent ROMs", ui_recentRomsCount > 0)) {
             for (int i = 0; i < ui_recentRomsCount; ++i) {
                 char label[270];
-                // REFACTOR-NOTE: Extract just filename for recent menu for brevity
                 const char* filename_display = strrchr(ui_recentRoms[i], '/');
                 if (!filename_display) filename_display = strrchr(ui_recentRoms[i], '\\');
                 filename_display = filename_display ? filename_display + 1 : ui_recentRoms[i];
@@ -235,16 +259,15 @@ void UI_DrawFileMenu(NES* nes) {
             igEndMenu();
         }
         igSeparator();
-        if (igMenuItem_Bool("Save State...", "Ctrl+S", false, nes != NULL && strlen(ui_currentRomName) > 0 && strcmp(ui_currentRomName, "No ROM Loaded") != 0 && strcmp(ui_currentRomName, "Failed to load ROM") != 0)) {
+        bool rom_loaded_for_state = (nes != NULL && strlen(ui_currentRomName) > 0 && strcmp(ui_currentRomName, "No ROM Loaded") != 0 && strcmp(ui_currentRomName, "Failed to load ROM") != 0);
+        if (igMenuItem_Bool("Save State...", "Ctrl+S", false, rom_loaded_for_state)) {
             ui_openSaveStateModal = true;
         }
-        if (igMenuItem_Bool("Load State...", "Ctrl+L", false, nes != NULL && strlen(ui_currentRomName) > 0 && strcmp(ui_currentRomName, "No ROM Loaded") != 0 && strcmp(ui_currentRomName, "Failed to load ROM") != 0)) {
+        if (igMenuItem_Bool("Load State...", "Ctrl+L", false, rom_loaded_for_state)) {
             ui_openLoadStateModal = true;
         }
         igSeparator();
         if (igMenuItem_Bool("Exit", "Alt+F4", false, true)) {
-            // REFACTOR-NOTE: This should set a flag that the main loop checks to exit gracefully
-            // For now, direct exit for simplicity, but a flag is better for cleanup.
             SDL_Event quit_event;
             quit_event.type = SDL_EVENT_QUIT;
             SDL_PushEvent(&quit_event);
@@ -252,6 +275,7 @@ void UI_DrawFileMenu(NES* nes) {
         igEndMenu();
     }
 
+    // REFACTOR-NOTE: Save/Load state modals are placeholders. Actual implementation requires NES_SaveState/NES_LoadState.
     if (ui_openSaveStateModal) {
         igOpenPopup_Str("Save State", 0);
         if (igBeginPopupModal("Save State", &ui_openSaveStateModal, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -260,10 +284,9 @@ void UI_DrawFileMenu(NES* nes) {
             igInputInt("##SaveSlot", &ui_selectedSaveLoadSlot, 1, 1, 0);
             ui_selectedSaveLoadSlot = ui_selectedSaveLoadSlot < 0 ? 0 : (ui_selectedSaveLoadSlot > 9 ? 9 : ui_selectedSaveLoadSlot);
 
-            // REFACTOR-NOTE: Add confirmation for overwrite if slot is not empty
             if (igButton("Save", (ImVec2){80,0})) {
-                UI_Log("Placeholder: Save state to slot %d", ui_selectedSaveLoadSlot);
-                // NES_SaveState(nes, ui_selectedSaveLoadSlot); // Actual call
+                UI_Log("Placeholder: Save state to slot %d for ROM: %s", ui_selectedSaveLoadSlot, ui_currentRomName);
+                // if (nes) NES_SaveState(nes, ui_selectedSaveLoadSlot); // Actual call
                 ui_openSaveStateModal = false;
                 igCloseCurrentPopup();
             }
@@ -283,10 +306,9 @@ void UI_DrawFileMenu(NES* nes) {
             igInputInt("##LoadSlot", &ui_selectedSaveLoadSlot, 1, 1, 0);
             ui_selectedSaveLoadSlot = ui_selectedSaveLoadSlot < 0 ? 0 : (ui_selectedSaveLoadSlot > 9 ? 9 : ui_selectedSaveLoadSlot);
 
-            // REFACTOR-NOTE: Show if slot has data, maybe a timestamp or small screenshot
             if (igButton("Load", (ImVec2){80,0})) {
-                UI_Log("Placeholder: Load state from slot %d", ui_selectedSaveLoadSlot);
-                // NES_LoadState(nes, ui_selectedSaveLoadSlot); // Actual call
+                UI_Log("Placeholder: Load state from slot %d for ROM: %s", ui_selectedSaveLoadSlot, ui_currentRomName);
+                // if (nes) NES_LoadState(nes, ui_selectedSaveLoadSlot); // Actual call
                 ui_openLoadStateModal = false;
                 igCloseCurrentPopup();
             }
@@ -302,77 +324,139 @@ void UI_DrawFileMenu(NES* nes) {
 
 void UI_LogWindow() {
     if (!ui_showLog) return;
-    // REFACTOR-NOTE: Consider ImGuiWindowFlags_HorizontalScrollbar if lines can be very long
     if (igBegin("Log", &ui_showLog, ImGuiWindowFlags_None)) {
-        // REFACTOR-NOTE: Add filter/search, copy to clipboard options
         if (igButton("Clear", (ImVec2){0,0})) {
             ui_logLen = 0;
             ui_logBuffer[0] = '\0';
         }
-        igSameLine(0, 10);
-        //igCheckbox("Auto-scroll", &ioptr->Log); // Example ImGui built-in auto-scroll
+        // REFACTOR-NOTE: Auto-scroll can be managed manually if needed, ImGui might have built-in options too.
+        // igSameLine(0, 10);
+        // static bool auto_scroll = true;
+        // igCheckbox("Auto-scroll", &auto_scroll);
 
         igSeparator();
-        igBeginChild_Str("LogScrollingRegion", (ImVec2){0,0}, false, ImGuiWindowFlags_HorizontalScrollbar);
+        igBeginChild_Str("LogScrollingRegion", (ImVec2){0,0}, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
         igTextUnformatted(ui_logBuffer, ui_logBuffer + ui_logLen);
-        //if (ioptr->OptLogAutoScrollToBottom && igGetScrollY() >= igGetScrollMaxY()) {
+        // if (auto_scroll && igGetScrollY() >= igGetScrollMaxY()) { // Basic auto-scroll
         //     igSetScrollHereY(1.0f);
-        //}
+        // }
+        if (igGetScrollY() >= igGetScrollMaxY()) // Scroll to bottom if at the end
+             igSetScrollHereY(1.0f);
         igEndChild();
     }
     igEnd();
 }
 
-static void UI_RenderPatternTable(NES* nes, int table_idx, GLuint* texture_id, uint32_t* pixel_buffer, const uint32_t* palette_to_use) {
-    if (!nes || !nes->ppu) return;
 
-    if (*texture_id == 0) {
-        glGenTextures(1, texture_id);
-        glBindTexture(GL_TEXTURE_2D, *texture_id);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 128, 128, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-        glBindTexture(GL_TEXTURE_2D, 0); // Unbind
-    }
+// Helper to render a pattern table to a texture using SDL_gpu
+static void UI_RenderPatternTable_GPU(SDL_GPUDevice* device, NES* nes, int table_idx, 
+                                   SDL_GPUTexture* texture, SDL_GPUTransferBuffer* transfer_buffer, 
+                                   uint32_t* pixel_buffer_rgba32, const uint32_t* palette_to_use_rgba32) {
+    if (!device || !nes || !nes->ppu || !texture || !transfer_buffer || !pixel_buffer_rgba32 || !palette_to_use_rgba32) return;
 
-    // REFACTOR-NOTE: This temporary buffer for pt_data might be inefficient if called very frequently.
-    // Consider if PPU_GetPatternTableData can write directly or if a persistent buffer is better.
-    uint8_t pt_data[256 * 128];//[128 * 128 / 8 * 2]; // Each tile is 16 bytes, 16x16 tiles.
-    PPU_GetPatternTableData(nes->ppu, table_idx, pt_data); // Assuming this fills pt_data correctly
+    // PPU_GetPatternTableData provides raw tile data.
+    // Each tile is 8x8 pixels. A pattern table is 16x16 tiles (128x128 pixels).
+    // Each tile is 16 bytes: 8 bytes for plane 0, 8 bytes for plane 1.
+    uint8_t pt_data[16 * 16 * 16]; // Max size for one pattern table (256 tiles * 16 bytes/tile = 4096 bytes)
+    PPU_GetPatternTableData(nes->ppu, table_idx, pt_data);
 
     for (int tile_y = 0; tile_y < 16; ++tile_y) {
         for (int tile_x = 0; tile_x < 16; ++tile_x) {
-            int tile_index_in_pt_data = (tile_y * 16 + tile_x); // Index of the tile
-            for (int y = 0; y < 8; ++y) {
-                // Each tile is 16 bytes in pt_data: 8 for plane 0, 8 for plane 1
-                uint8_t plane0 = pt_data[tile_index_in_pt_data * 16 + y];
-                uint8_t plane1 = pt_data[tile_index_in_pt_data * 16 + y + 8];
-                for (int x = 0; x < 8; ++x) {
-                    int bit = 7 - x;
-                    uint8_t color_idx = ((plane1 >> bit) & 1) << 1 | ((plane0 >> bit) & 1);
-                    uint32_t pixel_color = palette_to_use[color_idx]; // Already in RGBA for GL
-                    pixel_buffer[(tile_y * 8 + y) * 128 + (tile_x * 8 + x)] = pixel_color;
+            int tile_offset_in_pt_data = (tile_y * 16 + tile_x) * 16; // Offset to the current tile's data
+            for (int y = 0; y < 8; ++y) { // Pixel row within a tile
+                uint8_t plane0_byte = pt_data[tile_offset_in_pt_data + y];
+                uint8_t plane1_byte = pt_data[tile_offset_in_pt_data + y + 8];
+                for (int x = 0; x < 8; ++x) { // Pixel column within a tile
+                    int bit = 7 - x; // NES pixels are drawn left-to-right from MSB
+                    uint8_t color_idx_in_palette = ((plane1_byte >> bit) & 1) << 1 | ((plane0_byte >> bit) & 1);
+                    uint32_t final_pixel_color_rgba = palette_to_use_rgba32[color_idx_in_palette];
+                    
+                    // Calculate position in the 128x128 pixel_buffer_rgba32
+                    int buffer_x = tile_x * 8 + x;
+                    int buffer_y = tile_y * 8 + y;
+                    pixel_buffer_rgba32[buffer_y * 128 + buffer_x] = final_pixel_color_rgba;
                 }
             }
         }
     }
-    glBindTexture(GL_TEXTURE_2D, *texture_id);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 128, 128, GL_RGBA, GL_UNSIGNED_BYTE, pixel_buffer);
-    glBindTexture(GL_TEXTURE_2D, 0); // Unbind
+
+    // Upload to GPU Texture
+    SDL_MapGPUTransferBuffer(device, transfer_buffer, 0);
+
+    SDL_GPUCommandBuffer* cmd_buffer = SDL_AcquireGPUCommandBuffer(device);
+    if (cmd_buffer) {
+        SDL_GPUCopyPass* copy_pass = SDL_BeginGPUCopyPass(cmd_buffer);
+        if (copy_pass) {
+            SDL_GPUTextureTransferInfo source_transfer_info = {0};
+            source_transfer_info.transfer_buffer = transfer_buffer;
+            source_transfer_info.offset = 0;
+            source_transfer_info.pixels_per_row = 128 * 4; // Bytes per row
+            source_transfer_info.rows_per_layer = 128;    // Number of rows
+
+            SDL_GPUTextureRegion destination_region = {0};
+            destination_region.texture = texture;
+            destination_region.w = 128;
+            destination_region.h = 128;
+            destination_region.d = 1;
+
+            SDL_UploadToGPUTexture(copy_pass, &source_transfer_info, &destination_region, false);
+            SDL_EndGPUCopyPass(copy_pass);
+        } else {
+            UI_Log("PPUViewer: Failed to begin GPU copy pass: %s", SDL_GetError());
+        }
+        SDL_SubmitGPUCommandBuffer(cmd_buffer);
+    } else {
+        UI_Log("PPUViewer: Failed to acquire GPU command buffer: %s", SDL_GetError());
+    }
 }
 
 
 void UI_PPUViewer(NES* nes) {
-    if (!ui_showPpuViewer || !nes || !nes->ppu) {
-        // If window was open but NES becomes null (e.g. ROM unload failed badly), hide it.
+    if (!ui_showPpuViewer) return;
+    if (!nes || !nes->ppu) { // If window was open but NES becomes null, hide it.
         if (ui_showPpuViewer && (!nes || !nes->ppu)) ui_showPpuViewer = false;
         return;
     }
 
-    // REFACTOR-NOTE: Consider ImGuiWindowFlags_AlwaysAutoResize or set initial size
     if (igBegin("PPU Viewer", &ui_showPpuViewer, ImGuiWindowFlags_None)) {
-        static GLuint pt_texture0 = 0, pt_texture1 = 0;
-        static uint32_t pt_pixel_buffer[128 * 128];
+        // Ensure GPU resources for PPU Viewer are created
+        if (!pt_sampler) { // Create sampler once
+            SDL_GPUSamplerCreateInfo sampler_info = {0};
+            sampler_info.min_filter = SDL_GPU_FILTER_NEAREST; // For pixel art
+            sampler_info.mag_filter = SDL_GPU_FILTER_NEAREST;
+            sampler_info.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+            sampler_info.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+            sampler_info.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+            pt_sampler = SDL_CreateGPUSampler(gpu_device, &sampler_info);
+            if (!pt_sampler) UI_Log("PPUViewer: Failed to create sampler: %s", SDL_GetError());
+        }
+        if (!pt_transfer_buffer) { // Create transfer buffer once (can be reused)
+             SDL_GPUTransferBufferCreateInfo transfer_create_info = {0};
+             transfer_create_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+             transfer_create_info.size = 128 * 128 * 4 * 8 * 8; // For one 128x128 RGBA texture
+             pt_transfer_buffer = SDL_CreateGPUTransferBuffer(gpu_device, &transfer_create_info);
+             if (!pt_transfer_buffer) UI_Log("PPUViewer: Failed to create transfer buffer: %s", SDL_GetError());
+        }
+        if (!pt_texture0 && gpu_device) {
+            SDL_GPUTextureCreateInfo tex_info = {0};
+            tex_info.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+            tex_info.width = 128; tex_info.height = 128; tex_info.layer_count_or_depth = 1;
+            tex_info.num_levels = 1; tex_info.sample_count = SDL_GPU_SAMPLECOUNT_1;
+            tex_info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+            pt_texture0 = SDL_CreateGPUTexture(gpu_device, &tex_info);
+            if (!pt_texture0) UI_Log("PPUViewer: Failed to create pt_texture0: %s", SDL_GetError());
+        }
+        if (!pt_texture1 && gpu_device) {
+            SDL_GPUTextureCreateInfo tex_info = {0};
+            tex_info.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+            tex_info.width = 128; tex_info.height = 128; tex_info.layer_count_or_depth = 1;
+            tex_info.num_levels = 1; tex_info.sample_count = SDL_GPU_SAMPLECOUNT_1;
+            tex_info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+            pt_texture1 = SDL_CreateGPUTexture(gpu_device, &tex_info);
+            if (!pt_texture1) UI_Log("PPUViewer: Failed to create pt_texture1: %s", SDL_GetError());
+        }
+        
+        static uint32_t pt_pixel_buffer_rgba32[128 * 128]; // CPU-side buffer for pixel data
 
         const char* palette_names[] = {
             "BG Pal 0", "BG Pal 1", "BG Pal 2", "BG Pal 3",
@@ -380,58 +464,55 @@ void UI_PPUViewer(NES* nes) {
         };
         igSetNextItemWidth(150);
         igCombo_Str_arr("PT Palette", &ui_ppuViewerSelectedPalette, palette_names, 8, 4);
-        // REFACTOR-NOTE: Add interactivity to pattern tables (e.g., click tile to see info)
 
-        static uint32_t viewer_palette_rgba[4]; // RGBA for GL
-        const uint32_t* master_nes_palette_abgr = PPU_GetPalette(); // Master palette (typically 0xAABBGGRR or similar)
+        static uint32_t viewer_palette_rgba[4]; // RGBA for display
+        const uint32_t* master_nes_palette_abgr = PPU_GetPalette(); 
 
+        // Determine the 4 colors for the selected sub-palette
         for(int i=0; i<4; ++i) {
-            uint8_t palette_ram_base_idx = ui_ppuViewerSelectedPalette * 4;
-            // PPU palette RAM: $3F00-$3F0F for BG, $3F10-$3F1F for Sprites
-            // Universal BG color at $3F00 (mirrored to $3F04, $3F08, $3F0C for BG palettes, and $3F10, $3F14, $3F18, $3F1C for sprite palettes)
-            uint8_t palette_ram_address_offset = (palette_ram_base_idx + i);
-            if (i == 0) { // Color 0 of any palette is universal background or transparent for sprites
-                palette_ram_address_offset = (ui_ppuViewerSelectedPalette < 4) ? 0x00 : 0x10; // BG palettes use $3F00, Sprite palettes use $3F10 (which is also a mirror of $3F00 if not sprite transparent)
-                 // Actually, for display simplicity, let's always use the first color of the specific sub-palette index $3F00,$3F01.. or $3F10,$3F11...
-                 // Color 0 of any selected sub-palette always comes from PPU palette RAM index 0 ($3F00) if it's a BG palette,
-                 // or PPU palette RAM index 0 ($3F00) if it's a sprite palette and color 0 is used (usually for transparency).
-                 // More accurately, viewer_palette[0] should be nes->ppu->palette[0] (master BG color),
-                 // and viewer_palette[1,2,3] from nes->ppu->palette[palette_ram_base_idx + 1,2,3].
-                 // Let's simplify:
-                 // BG palettes: $3F00 (shared), $3F01, $3F02, $3F03 for Pal0; $3F00, $3F05, $3F06, $3F07 for Pal1 etc.
-                 // Sprite palettes: $3F00 (shared for transparency), $3F11, $3F12, $3F13 for Pal0; $3F00, $3F15, $3F16, $3F17 for Pal1 etc.
-                uint8_t actual_palette_index;
-                if (i == 0) { // Universal background color / Sprite transparent color
-                    actual_palette_index = nes->ppu->palette[0x00];
-                } else {
-                    actual_palette_index = nes->ppu->palette[palette_ram_address_offset % 32];
-                }
-                 uint32_t nes_col_abgr = master_nes_palette_abgr[actual_palette_index % 64];
-                 // Convert ABGR (common NES emu format) to RGBA for GL
-                 viewer_palette_rgba[i] = ((nes_col_abgr & 0x000000FF) << 24) | // R
-                                        ((nes_col_abgr & 0x0000FF00) << 8)  | // G
-                                        ((nes_col_abgr & 0x00FF0000) >> 8)  | // B
-                                        0xFF000000;                          // A (force opaque for viewer)
-            } else { // Colors 1, 2, 3 of the sub-palette
-                uint8_t actual_palette_index = nes->ppu->palette[palette_ram_address_offset % 32]; // Use selected palette index
-                uint32_t nes_col_abgr = master_nes_palette_abgr[actual_palette_index % 64];
-                viewer_palette_rgba[i] = ((nes_col_abgr & 0x000000FF) << 24) | // R
-                                       ((nes_col_abgr & 0x0000FF00) << 8)  | // G
-                                       ((nes_col_abgr & 0x00FF0000) >> 8)  | // B
-                                       0xFF000000;                         // A
+            uint8_t palette_ram_idx; // Index into PPU's $3F00-$3F1F
+            if (i == 0) { // Color 0 is universal background or transparent for sprites
+                 palette_ram_idx = 0x00; // Always use $3F00 for the first color in any displayed palette
+            } else {
+                // ui_ppuViewerSelectedPalette: 0-3 for BG, 4-7 for Sprites
+                // BG palettes: $3F00, $3F01, $3F02, $3F03 (for pal 0)
+                //              $3F00, $3F05, $3F06, $3F07 (for pal 1)
+                // Sprite palettes: $3F00 (or $3F10), $3F11, $3F12, $3F13 (for pal 0 / overall pal 4)
+                //                  $3F00 (or $3F10), $3F15, $3F16, $3F17 (for pal 1 / overall pal 5)
+                int base_offset = (ui_ppuViewerSelectedPalette < 4) ? 
+                                  (ui_ppuViewerSelectedPalette * 4) :  // BG palettes start at 0x00, 0x04, 0x08, 0x0C
+                                  (0x10 + (ui_ppuViewerSelectedPalette - 4) * 4); // Sprite palettes start at 0x10, 0x14, 0x18, 0x1C
+                palette_ram_idx = base_offset + i;
             }
+            // Ensure mirroring for palette addresses (e.g. $3F04 -> $3F00, $3F10 -> $3F00 etc.)
+            if (palette_ram_idx % 4 == 0) palette_ram_idx = 0x00; // All palette[0] colors mirror $3F00
+
+            uint8_t master_palette_color_index = nes->ppu->palette[palette_ram_idx % 32]; // Read from PPU palette RAM
+            uint32_t nes_col_abgr = master_nes_palette_abgr[master_palette_color_index % 64];
+            
+            // Convert ABGR (0xAABBGGRR) to RGBA (0xRRGGBBAA)
+            viewer_palette_rgba[i] = ((nes_col_abgr & 0x000000FF) << 24) | // R to R0000000
+                                   ((nes_col_abgr & 0x0000FF00) << 8)  | // G to 00GG0000
+                                   ((nes_col_abgr & 0x00FF0000) >> 8)  | // B to 0000BB00
+                                   0x000000FF;                          // A (force opaque FF)
         }
 
 
-        igText("Pattern Table 0 ($0000):");
-        UI_RenderPatternTable(nes, 0, &pt_texture0, pt_pixel_buffer, viewer_palette_rgba);
-        igImage((ImTextureID)(intptr_t)pt_texture0, (ImVec2){128 * 2.0f, 128 * 2.0f}, (ImVec2){0,0}, (ImVec2){1,1});
+        if (pt_texture0 && pt_sampler && pt_transfer_buffer) {
+            igText("Pattern Table 0 ($0000):");
+            UI_RenderPatternTable_GPU(gpu_device, nes, 0, pt_texture0, pt_transfer_buffer, pt_pixel_buffer_rgba32, viewer_palette_rgba);
+            SDL_GPUTextureSamplerBinding binding0 = {pt_texture0, pt_sampler};
+            igImage((ImTextureID)(uintptr_t)&binding0, (ImVec2){128 * 2.0f, 128 * 2.0f}, (ImVec2){0,0}, (ImVec2){1,1});
+        }
 
         igSameLine(0, 20);
         igBeginGroup();
-        igText("Pattern Table 1 ($1000):");
-        UI_RenderPatternTable(nes, 1, &pt_texture1, pt_pixel_buffer, viewer_palette_rgba);
-        igImage((ImTextureID)(intptr_t)pt_texture1, (ImVec2){128 * 2.0f, 128 * 2.0f}, (ImVec2){0,0}, (ImVec2){1,1});
+        if (pt_texture1 && pt_sampler && pt_transfer_buffer) {
+            igText("Pattern Table 1 ($1000):");
+            UI_RenderPatternTable_GPU(gpu_device, nes, 1, pt_texture1, pt_transfer_buffer, pt_pixel_buffer_rgba32, viewer_palette_rgba);
+            SDL_GPUTextureSamplerBinding binding1 = {pt_texture1, pt_sampler};
+            igImage((ImTextureID)(uintptr_t)&binding1, (ImVec2){128 * 2.0f, 128 * 2.0f}, (ImVec2){0,0}, (ImVec2){1,1});
+        }
         igEndGroup();
         
         igSeparator();
@@ -441,33 +522,32 @@ void UI_PPUViewer(NES* nes) {
             igText("STATUS (0x2002): 0x%02X", nes->ppu->status);
             igText("OAMADDR (0x2003): 0x%02X", nes->ppu->oam_addr);
             igText("VRAM Addr (v): 0x%04X, Temp Addr (t): 0x%04X", nes->ppu->vram_addr, nes->ppu->temp_addr);
-            igText("Fine X: %d, Write Latch (w): %d", nes->ppu->fine_x, nes->ppu->addr_latch); // addr_latch is 'w'
+            igText("Fine X: %d, Write Latch (w): %d", nes->ppu->fine_x, nes->ppu->addr_latch);
             igText("Scanline: %d, Cycle: %d", nes->ppu->scanline, nes->ppu->cycle);
             igText("Frame Odd: %s", nes->ppu->frame_odd ? "true" : "false");
             igText("NMI Occurred: %s, NMI Output: %s", nes->ppu->nmi_occured ? "true" : "false", nes->ppu->nmi_output ? "true" : "false");
-
         }
 
         if (igCollapsingHeader_TreeNodeFlags("Palettes", ImGuiTreeNodeFlags_None)) {
             igText("Current PPU Palette RAM ($3F00 - $3F1F):");
             for (int i = 0; i < 32; ++i) {
-                uint8_t palette_idx_val = nes->ppu->palette[i]; // Value from PPU palette RAM (index into master NES palette)
+                uint8_t palette_idx_val = nes->ppu->palette[i];
                 uint32_t nes_col_abgr = master_nes_palette_abgr[palette_idx_val % 64];
-                ImVec4 im_col;
+                ImVec4 im_col; // RGBA for ImGui
                 im_col.x = ((nes_col_abgr & 0x000000FF)) / 255.0f;        // R
                 im_col.y = ((nes_col_abgr & 0x0000FF00) >> 8) / 255.0f;   // G
                 im_col.z = ((nes_col_abgr & 0x00FF0000) >> 16) / 255.0f;  // B
-                im_col.w = 1.0f; // A (fully opaque for display)
+                im_col.w = 1.0f;
                 
-                if (i > 0 && i % 16 == 0) igNewLine(); // Group BG and Sprite palettes
-                if (i > 0 && i % 4 == 0 && i % 16 != 0) igSameLine(0,8); // Space between sub-palettes
+                if (i > 0 && i % 16 == 0) igNewLine();
+                if (i > 0 && i % 4 == 0 && i % 16 != 0) igSameLine(0,8);
 
                 char pal_label[16];
                 snprintf(pal_label, sizeof(pal_label), "$3F%02X", i);
                 igColorButton(pal_label, im_col, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, (ImVec2){20, 20});
                 if (igIsItemHovered(0)) {
                     igBeginTooltip();
-                    igText("$3F%02X: Master Index 0x%02X", i, palette_idx_val);
+                    igText("$3F%02X: Master Idx 0x%02X", i, palette_idx_val);
                     igColorButton("##tooltipcol", im_col, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel, (ImVec2){64,64});
                     igEndTooltip();
                 }
@@ -475,44 +555,43 @@ void UI_PPUViewer(NES* nes) {
             }
         }
 
-
         if (igCollapsingHeader_TreeNodeFlags("OAM (Sprites)", ImGuiTreeNodeFlags_None)) {
             const uint8_t* oam_data = PPU_GetOAM(nes->ppu);
             if (oam_data) {
-                 // REFACTOR-NOTE: Display more OAM entries, or a way to scroll through them
                 if (igBeginTable("OAMTable", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit, (ImVec2){0,0}, 0)) {
                     igTableSetupColumn("Sprite #", 0, 0, 0);
                     igTableSetupColumn("Y", 0, 0, 0);
                     igTableSetupColumn("Tile ID", 0, 0, 0);
-                    igTableSetupColumn("Attr", 0, 0, 0);
+                    igTableSetupColumn("Attr", 0, 0, 0); // REFACTOR-NOTE: Decode attributes (palette, priority, flip) for better display.
                     igTableSetupColumn("X", 0, 0, 0);
                     igTableHeadersRow();
-                    for (int i = 0; i < 8; ++i) { // Display first 8 sprites, more can be added
+                    for (int i = 0; i < 8; ++i) { // Display first 8 sprites
                         igTableNextRow(0,0);
                         igTableSetColumnIndex(0); igText("%d", i);
                         igTableSetColumnIndex(1); igText("0x%02X (%d)", oam_data[i * 4 + 0], oam_data[i * 4 + 0]);
                         igTableSetColumnIndex(2); igText("0x%02X", oam_data[i * 4 + 1]);
-                        igTableSetColumnIndex(3); igText("0x%02X", oam_data[i * 4 + 2]); // REFACTOR-NOTE: Decode attributes (palette, priority, flip)
+                        igTableSetColumnIndex(3); igText("0x%02X", oam_data[i * 4 + 2]);
                         igTableSetColumnIndex(4); igText("0x%02X (%d)", oam_data[i * 4 + 3], oam_data[i * 4 + 3]);
                     }
                     igEndTable();
                 }
             }
         }
-        // REFACTOR-NOTE: Add Nametable viewer section here
+        // REFACTOR-NOTE: Add Nametable viewer section here (complex, involves rendering tiles based on nametable, attribute table, and current PPU scroll).
     }
     igEnd();
 }
 
 
 static uint16_t ui_memoryViewerAddress = 0x0000;
-static uint8_t ui_memorySnapshot[0x10000]; // REFACTOR-NOTE: This snapshot is for the full 64KB CPU address space.
-                                           // For PPU memory, a separate viewer/snapshot might be needed if BUS_Peek doesn't cover it.
-static int ui_memoryViewerRows = 16; // Default rows to show
+// REFACTOR-NOTE: Snapshot is for CPU view. PPU memory has its own address space and would need a separate viewer or mode.
+static uint8_t ui_memorySnapshot[0x10000]; 
+static int ui_memoryViewerRows = 16;
 
 void UI_MemoryViewer(NES* nes) {
-    if (!ui_showMemoryViewer || !nes) {
-        if (ui_showMemoryViewer && !nes) ui_showMemoryViewer = false;
+    if (!ui_showMemoryViewer) return;
+    if (!nes) {
+        if (ui_showMemoryViewer) ui_showMemoryViewer = false;
         return;
     }
 
@@ -521,15 +600,14 @@ void UI_MemoryViewer(NES* nes) {
         igInputScalar("Base Addr", ImGuiDataType_U16, &ui_memoryViewerAddress, NULL, NULL, "%04X", ImGuiInputTextFlags_CharsHexadecimal);
         igSameLine(0,10);
         igSetNextItemWidth(100);
-        igSliderInt("Rows", &ui_memoryViewerRows, 1, 64, "%d", 0); // Display 1 to 64 rows (16 bytes each)
+        igSliderInt("Rows", &ui_memoryViewerRows, 1, 64, "%d", 0);
 
-        // REFACTOR-NOTE: Add options for different memory views (e.g., PPU VRAM via PPU debug functions)
-        // REFACTOR-NOTE: Add search, goto, data interpretation features
+        // REFACTOR-NOTE: Add search, goto, data interpretation (e.g., as text, 16-bit words) features for advanced debugging.
 
         igBeginChild_Str("MemoryViewerScrollRegion", (ImVec2){0, (float)igGetTextLineHeightWithSpacing() * (ui_memoryViewerRows + 2.5f)}, ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
 
         if (igBeginTable("MemoryTable", 17, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit, (ImVec2){0, 0}, 0)) {
-            igTableSetupColumn("Addr", ImGuiTableColumnFlags_WidthFixed, igGetFontSize() * 4.5f, 0); // Auto-adjust based on font size
+            igTableSetupColumn("Addr", ImGuiTableColumnFlags_WidthFixed, igGetFontSize() * 4.5f, 0);
             for (int i = 0; i < 16; i++) {
                 char colName[4];
                 snprintf(colName, sizeof(colName), "%X", i);
@@ -539,9 +617,7 @@ void UI_MemoryViewer(NES* nes) {
 
             for (int row = 0; row < ui_memoryViewerRows; row++) {
                 uint16_t base_addr_for_row = ui_memoryViewerAddress + (row * 16);
-                // Prevent wrap-around read for display (though BUS_Peek should handle mirroring/mapping)
-                if (ui_memoryViewerAddress > 0xFFFF - (row*16)) break;
-
+                if (ui_memoryViewerAddress > 0xFFFF - (row*16)) break; // Prevent wrap for display address
 
                 igTableNextRow(0, 0);
                 igTableSetColumnIndex(0);
@@ -549,21 +625,21 @@ void UI_MemoryViewer(NES* nes) {
 
                 for (int col = 0; col < 16; col++) {
                     uint16_t currentAddr = base_addr_for_row + col;
-                    if (currentAddr > 0xFFFF) { // Should not happen with above check but safety
+                    if (currentAddr > 0xFFFF) { // Should not happen due to outer break, but defensive.
                         igTableSetColumnIndex(col + 1);
                         igText("--");
                         continue;
                     }
-                    uint8_t value = BUS_Peek(nes, currentAddr); // Assuming BUS_Peek is safe and handles all mappings
-                    uint8_t prevValue = ui_memorySnapshot[currentAddr]; // Snapshot is for CPU view
+                    uint8_t value = BUS_Peek(nes, currentAddr); 
+                    uint8_t prevValue = ui_memorySnapshot[currentAddr];
 
-                    if (nes->cpu && !ui_paused) { // Only update snapshot if running, to see changes
+                    if (nes->cpu && !ui_paused) { 
                         ui_memorySnapshot[currentAddr] = value;
                     }
 
                     igTableSetColumnIndex(col + 1);
-                    if (value != prevValue && ui_paused) { // Highlight changes only when paused to be meaningful
-                        igPushStyleColor_Vec4(ImGuiCol_Text, (ImVec4){1.0f, 0.2f, 0.2f, 1.0f});
+                    if (value != prevValue && ui_paused) { 
+                        igPushStyleColor_Vec4(ImGuiCol_Text, (ImVec4){1.0f, 0.3f, 0.3f, 1.0f}); // Highlight changed values when paused
                         igText("%02X", value);
                         igPopStyleColor(1);
                     } else {
@@ -579,51 +655,47 @@ void UI_MemoryViewer(NES* nes) {
 }
 
 void UI_DrawDisassembler(NES* nes) {
-    if (!ui_showDisassembler || !nes || !nes->cpu) {
+    if (!ui_showDisassembler) return;
+    if (!nes || !nes->cpu) {
         if (ui_showDisassembler && (!nes || !nes->cpu)) ui_showDisassembler = false;
         return;
     }
     if (igBegin("Disassembler", &ui_showDisassembler, ImGuiWindowFlags_None)) {
-        // REFACTOR-NOTE: Add syntax highlighting, breakpoint setting, step controls here too.
+        // REFACTOR-NOTE: Add breakpoint setting, step-over/step-out controls, and syntax highlighting for a richer debugger.
         uint16_t pc_to_disassemble = nes->cpu->pc;
         igText("Current PC: 0x%04X", pc_to_disassemble);
         igSameLine(0, 20);
-        if(igButton("Step Op", (ImVec2){0,0})) {
-            if(ui_paused) NES_Step(nes); // Step one CPU instruction
-            else UI_Log("Cannot step instruction while running.");
+        if(igButton("Step Op (F7)", (ImVec2){0,0})) { // REFACTOR-NOTE: F7 mapping added here for local control
+            if(ui_paused) NES_Step(nes); 
+            else UI_Log("Cannot step instruction while running. Pause first (F6).");
         }
 
-
-        igBeginChild_Str("DisassemblyRegion", (ImVec2){0, igGetTextLineHeightWithSpacing() * 18}, ImGuiChildFlags_Borders, 0);
+        igBeginChild_Str("DisassemblyRegion", (ImVec2){0, igGetTextLineHeightWithSpacing() * 18}, ImGuiChildFlags_Borders, ImGuiWindowFlags_None); // Removed ImGuiWindowFlags_HorizontalScrollbar as table handles it
         if (igBeginTable("DisassembledView", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_ScrollY , (ImVec2){0,0},0)) {
-            igTableSetupColumn(" ", ImGuiTableColumnFlags_WidthFixed, igGetFontSize() * 1.5f,0); // For PC indicator
+            igTableSetupColumn(" ", ImGuiTableColumnFlags_WidthFixed, igGetFontSize() * 1.5f,0); 
             igTableSetupColumn("Address", ImGuiTableColumnFlags_WidthFixed, igGetFontSize() * 5.0f,0);
             igTableSetupColumn("Instruction", ImGuiTableColumnFlags_WidthStretch, 0, 0);
-            //igTableHeadersRow(); // Optional headers
-
+            
             char disasm_buf[128];
-            uint16_t addr_iter = pc_to_disassemble;
+            uint16_t addr_iter = nes->cpu->pc; 
 
-            // Try to center PC in the view a bit by disassembling a few lines before
-            // This is a simple approach, more robust would involve calculating actual instruction lengths beforehand.
-            for(int i=0; i<8; ++i) {
-                // This is tricky as we don't know instruction lengths backwards easily.
-                // For now, let's just start a few fixed bytes before.
-                // A proper solution needs a more complex lookup or pre-scan.
-                // addr_iter -= ???; // This requires knowing previous instruction length.
-                // For simplicity, we'll just list from PC onwards for now, or a fixed offset.
+            // Attempt to show a few lines before PC (very simplified, true back-disassembly is complex)
+            // This naive approach just starts a bit earlier and hopes instructions align.
+            uint16_t start_addr = nes->cpu->pc;
+            for(int pre_lines = 0; pre_lines < 8; ++pre_lines) {
+                if (start_addr < 5) { start_addr = 0; break; } // Avoid underflow by too much
+                start_addr -= 3; // Guess average instruction length
             }
-            // Let's try to show PC and some instructions around it.
-            // This is a placeholder for a more sophisticated disassembler view.
-            // For now, just disassemble from current PC for a few lines.
-            addr_iter = nes->cpu->pc; // Start disassembly from current PC
+            if (start_addr > nes->cpu->pc) start_addr = nes->cpu->pc; // Safety if PC is very low
 
-            for (int i = 0; i < 16; i++) { // Show 16 instructions
+            addr_iter = start_addr;
+
+            for (int i = 0; i < 32; i++) { // Show more lines
                 igTableNextRow(0,0);
                 
                 igTableSetColumnIndex(0);
                 if (addr_iter == nes->cpu->pc) {
-                    igText(">"); // PC indicator
+                    igText(">"); 
                 } else {
                     igText(" ");
                 }
@@ -632,21 +704,20 @@ void UI_DrawDisassembler(NES* nes) {
                 igText("0x%04X", addr_iter);
 
                 igTableSetColumnIndex(2);
-                // The disassemble function needs to not rely on internal NES state for 'next' if we are just viewing
-                // Assuming disassemble function updates addr_iter to the next instruction's address
-                // and returns the length of the current instruction or similar.
-                // For this example, let's assume it returns the address of the *next* instruction.
                 uint16_t prev_addr_iter = addr_iter;
-                addr_iter = disassemble(nes, addr_iter, disasm_buf, sizeof(disasm_buf));
+                addr_iter = disassemble(nes, addr_iter, disasm_buf, sizeof(disasm_buf)); // disassemble should return next instruction's address
                 igTextUnformatted(disasm_buf, NULL);
 
-                if (addr_iter <= prev_addr_iter) { // Stuck or bad disassembly? Prevent infinite loop.
+                if (addr_iter <= prev_addr_iter && i < 31) { // Prevent infinite loop if disassembly stalls, but allow last line
                     igTableNextRow(0,0);
-                    igTableSetColumnIndex(1); igText("---");
-                    igTableSetColumnIndex(2); igText("Disassembly error or end.");
+                    igTableSetColumnIndex(1); igText("----");
+                    igTableSetColumnIndex(2); igText("Disassembly error or end of known code.");
                     break;
                 }
+                 if (addr_iter == 0 && i < 31) break; // Stop if disassemble returns 0 (e.g. invalid opcode sequence)
             }
+            // Auto-scroll to PC if it's not visible
+            // This is a bit tricky with tables, might need manual scroll management or ImGuiListClipper
             igEndTable();
         }
         igEndChild();
@@ -657,8 +728,13 @@ void UI_DrawDisassembler(NES* nes) {
 
 void UI_ToggleFullscreen() {
     ui_sdl_fullscreen = !ui_sdl_fullscreen;
-    SDL_SetWindowFullscreen(window, ui_sdl_fullscreen ? true : false);
-    UI_Log("Toggled fullscreen to: %s", ui_sdl_fullscreen ? "ON" : "OFF");
+    // SDL_SetWindowFullscreen takes SDL_bool (SDL_TRUE/SDL_FALSE)
+    if (SDL_SetWindowFullscreen(window, ui_sdl_fullscreen ? true : false) != 0) {
+        UI_Log("Error toggling fullscreen: %s", SDL_GetError());
+        ui_sdl_fullscreen = !ui_sdl_fullscreen; // Revert state on error
+    } else {
+        UI_Log("Toggled fullscreen to: %s", ui_sdl_fullscreen ? "ON" : "OFF");
+    }
 }
 
 void UI_ApplyTheme(UI_Theme theme) {
@@ -676,64 +752,68 @@ void UI_ApplyTheme(UI_Theme theme) {
         colors[ImGuiCol_Button] = (ImVec4){0.80f, 0.80f, 0.80f, 1.00f};
         colors[ImGuiCol_ButtonHovered] = (ImVec4){0.70f, 0.70f, 0.70f, 1.00f};
         colors[ImGuiCol_ButtonActive] = (ImVec4){0.60f, 0.60f, 0.60f, 1.00f};
-        // REFACTOR-NOTE: Add more color definitions for light theme for completeness
-    } else { // UI_THEME_DARK (using your original dark theme)
-        igStyleColorsDark(NULL);
-        colors[ImGuiCol_Text] = (ImVec4){1.00f, 1.00f, 1.00f, 1.00f};
-        colors[ImGuiCol_TextDisabled] = (ImVec4){0.50f, 0.50f, 0.50f, 1.00f}; // Made less dim
-        colors[ImGuiCol_WindowBg] = (ImVec4){0.10f, 0.10f, 0.10f, 1.00f}; // Slightly darker
-        colors[ImGuiCol_ChildBg] = (ImVec4){0.12f, 0.12f, 0.12f, 1.00f};
-        colors[ImGuiCol_PopupBg] = (ImVec4){0.08f, 0.08f, 0.08f, 0.94f};
-        colors[ImGuiCol_Border] = (ImVec4){0.30f, 0.30f, 0.33f, 0.50f};
-        colors[ImGuiCol_BorderShadow] = (ImVec4){0.00f, 0.00f, 0.00f, 0.00f};
-        colors[ImGuiCol_FrameBg] = (ImVec4){0.20f, 0.20f, 0.22f, 0.54f};
-        colors[ImGuiCol_FrameBgHovered] = (ImVec4){0.25f, 0.25f, 0.28f, 0.78f};
-        colors[ImGuiCol_FrameBgActive] = (ImVec4){0.30f, 0.30f, 0.33f, 1.00f};
-        colors[ImGuiCol_TitleBg] = (ImVec4){0.08f, 0.08f, 0.08f, 1.00f};
-        colors[ImGuiCol_TitleBgActive] = (ImVec4){0.15f, 0.15f, 0.17f, 1.00f};
-        colors[ImGuiCol_TitleBgCollapsed] = (ImVec4){0.08f, 0.08f, 0.08f, 0.75f};
-        colors[ImGuiCol_MenuBarBg] = (ImVec4){0.14f, 0.14f, 0.16f, 1.00f};
-        colors[ImGuiCol_ScrollbarBg] = (ImVec4){0.02f, 0.02f, 0.02f, 0.53f};
-        colors[ImGuiCol_ScrollbarGrab] = (ImVec4){0.31f, 0.31f, 0.31f, 1.00f};
-        colors[ImGuiCol_ScrollbarGrabHovered] = (ImVec4){0.41f, 0.41f, 0.41f, 1.00f};
-        colors[ImGuiCol_ScrollbarGrabActive] = (ImVec4){0.51f, 0.51f, 0.51f, 1.00f};
-        colors[ImGuiCol_CheckMark] = (ImVec4){0.60f, 0.81f, 0.26f, 1.00f}; // Brighter checkmark
-        colors[ImGuiCol_SliderGrab] = (ImVec4){0.50f, 0.71f, 0.24f, 1.00f};
-        colors[ImGuiCol_SliderGrabActive] = (ImVec4){0.60f, 0.81f, 0.26f, 1.00f};
-        colors[ImGuiCol_Button] = (ImVec4){0.22f, 0.40f, 0.15f, 0.60f}; // Greenish hue
-        colors[ImGuiCol_ButtonHovered] = (ImVec4){0.28f, 0.50f, 0.20f, 1.00f};
-        colors[ImGuiCol_ButtonActive] = (ImVec4){0.32f, 0.58f, 0.22f, 1.00f};
-        colors[ImGuiCol_Header] = (ImVec4){0.20f, 0.38f, 0.14f, 0.58f}; // Header for collapsing sections
-        colors[ImGuiCol_HeaderHovered] = (ImVec4){0.26f, 0.48f, 0.18f, 0.80f};
-        colors[ImGuiCol_HeaderActive] = (ImVec4){0.30f, 0.55f, 0.20f, 1.00f};
-        colors[ImGuiCol_Separator] = colors[ImGuiCol_Border];
-        colors[ImGuiCol_SeparatorHovered] = (ImVec4){0.40f, 0.60f, 0.20f, 0.78f};
-        colors[ImGuiCol_SeparatorActive] = (ImVec4){0.50f, 0.70f, 0.25f, 1.00f};
-        colors[ImGuiCol_ResizeGrip] = (ImVec4){0.44f, 0.70f, 0.20f, 0.30f}; // More subtle resize grip
-        colors[ImGuiCol_ResizeGripHovered] = (ImVec4){0.50f, 0.80f, 0.26f, 0.67f};
-        colors[ImGuiCol_ResizeGripActive] = (ImVec4){0.58f, 0.90f, 0.30f, 0.95f};
-        colors[ImGuiCol_Tab] = colors[ImGuiCol_Header];
-        colors[ImGuiCol_TabHovered] = colors[ImGuiCol_HeaderHovered];
-        //colors[ImGuiCol_TabActive] = colors[ImGuiCol_HeaderActive];
-        //colors[ImGuiCol_TabUnfocused] = igColorConvertFloat4ToU32(colors[ImGuiCol_Tab]); // ImGui::GetColorU32(ImGuiCol_Tab);
-        //colors[ImGuiCol_TabUnfocusedActive] = igColorConvertFloat4ToU32(colors[ImGuiCol_TabActive]); //ImGui::GetColorU32(ImGuiCol_TabActive);
-        colors[ImGuiCol_DockingPreview] = colors[ImGuiCol_HeaderActive]; // (ImVec4){0.26f, 0.59f, 0.98f, 0.70f};
-        colors[ImGuiCol_DockingEmptyBg] = (ImVec4){0.20f, 0.20f, 0.20f, 1.00f};
-        colors[ImGuiCol_PlotLines] = (ImVec4){0.61f, 0.61f, 0.61f, 1.00f};
-        colors[ImGuiCol_PlotLinesHovered] = (ImVec4){1.00f, 0.43f, 0.35f, 1.00f};
-        colors[ImGuiCol_PlotHistogram] = (ImVec4){0.90f, 0.70f, 0.00f, 1.00f};
-        colors[ImGuiCol_PlotHistogramHovered] = (ImVec4){1.00f, 0.60f, 0.00f, 1.00f};
-        colors[ImGuiCol_TextSelectedBg] = (ImVec4){0.26f, 0.59f, 0.98f, 0.35f};
-        colors[ImGuiCol_DragDropTarget] = (ImVec4){1.00f, 1.00f, 0.00f, 0.90f};
-        //colors[ImGuiCol_NavHighlight] = colors[ImGuiCol_HeaderHovered]; // (ImVec4){0.26f, 0.59f, 0.98f, 1.00f};
-        colors[ImGuiCol_NavWindowingHighlight] = (ImVec4){1.00f, 1.00f, 1.00f, 0.70f};
-        colors[ImGuiCol_NavWindowingDimBg] = (ImVec4){0.80f, 0.80f, 0.80f, 0.20f};
-        colors[ImGuiCol_ModalWindowDimBg] = (ImVec4){0.20f, 0.20f, 0.20f, 0.60f}; // Darker modal dim
+        colors[ImGuiCol_CheckMark] = (ImVec4){0.26f, 0.59f, 0.98f, 1.00f}; // A more distinct checkmark for light theme
+        colors[ImGuiCol_SliderGrab] = (ImVec4){0.24f, 0.52f, 0.88f, 1.00f};
+        colors[ImGuiCol_SliderGrabActive] = (ImVec4){0.26f, 0.59f, 0.98f, 1.00f};
+        clear_color = (ImVec4){0.90f, 0.90f, 0.90f, 1.00f}; // Lighter clear color for light theme
+    } else { // UI_THEME_DARK
+        igStyleColorsDark(NULL); // Start with default dark
+        colors[ImGuiCol_Text]                   = (ImVec4){1.00f, 1.00f, 1.00f, 1.00f};
+        colors[ImGuiCol_TextDisabled]           = (ImVec4){0.50f, 0.50f, 0.50f, 1.00f};
+        colors[ImGuiCol_WindowBg]               = (ImVec4){0.10f, 0.10f, 0.11f, 1.00f}; // Slightly bluish dark
+        colors[ImGuiCol_ChildBg]                = (ImVec4){0.12f, 0.12f, 0.13f, 1.00f};
+        colors[ImGuiCol_PopupBg]                = (ImVec4){0.08f, 0.08f, 0.09f, 0.94f};
+        colors[ImGuiCol_Border]                 = (ImVec4){0.43f, 0.43f, 0.50f, 0.50f};
+        colors[ImGuiCol_BorderShadow]           = (ImVec4){0.00f, 0.00f, 0.00f, 0.00f};
+        colors[ImGuiCol_FrameBg]                = (ImVec4){0.20f, 0.21f, 0.22f, 0.54f}; // Controls background
+        colors[ImGuiCol_FrameBgHovered]         = (ImVec4){0.25f, 0.26f, 0.28f, 0.78f};
+        colors[ImGuiCol_FrameBgActive]          = (ImVec4){0.30f, 0.31f, 0.33f, 1.00f};
+        colors[ImGuiCol_TitleBg]                = (ImVec4){0.08f, 0.08f, 0.09f, 1.00f}; // Window title bar
+        colors[ImGuiCol_TitleBgActive]          = (ImVec4){0.15f, 0.16f, 0.18f, 1.00f}; // Active window title bar
+        colors[ImGuiCol_TitleBgCollapsed]       = (ImVec4){0.08f, 0.08f, 0.09f, 0.75f};
+        colors[ImGuiCol_MenuBarBg]              = (ImVec4){0.14f, 0.15f, 0.16f, 1.00f};
+        colors[ImGuiCol_ScrollbarBg]            = (ImVec4){0.02f, 0.02f, 0.02f, 0.53f};
+        colors[ImGuiCol_ScrollbarGrab]          = (ImVec4){0.31f, 0.31f, 0.33f, 1.00f};
+        colors[ImGuiCol_ScrollbarGrabHovered]   = (ImVec4){0.41f, 0.41f, 0.43f, 1.00f};
+        colors[ImGuiCol_ScrollbarGrabActive]    = (ImVec4){0.51f, 0.51f, 0.53f, 1.00f};
+        colors[ImGuiCol_CheckMark]              = (ImVec4){0.50f, 0.75f, 0.25f, 1.00f}; // Greenish checkmark
+        colors[ImGuiCol_SliderGrab]             = (ImVec4){0.40f, 0.65f, 0.20f, 1.00f};
+        colors[ImGuiCol_SliderGrabActive]       = (ImVec4){0.50f, 0.75f, 0.25f, 1.00f};
+        colors[ImGuiCol_Button]                 = (ImVec4){0.22f, 0.40f, 0.18f, 0.60f}; // Darker Greenish buttons
+        colors[ImGuiCol_ButtonHovered]          = (ImVec4){0.28f, 0.50f, 0.24f, 1.00f};
+        colors[ImGuiCol_ButtonActive]           = (ImVec4){0.32f, 0.58f, 0.28f, 1.00f};
+        colors[ImGuiCol_Header]                 = (ImVec4){0.20f, 0.38f, 0.16f, 0.58f}; // Collapsing header
+        colors[ImGuiCol_HeaderHovered]          = (ImVec4){0.26f, 0.48f, 0.22f, 0.80f};
+        colors[ImGuiCol_HeaderActive]           = (ImVec4){0.30f, 0.55f, 0.26f, 1.00f};
+        colors[ImGuiCol_Separator]              = colors[ImGuiCol_Border];
+        colors[ImGuiCol_SeparatorHovered]       = (ImVec4){0.40f, 0.60f, 0.20f, 0.78f};
+        colors[ImGuiCol_SeparatorActive]        = (ImVec4){0.50f, 0.70f, 0.25f, 1.00f};
+        colors[ImGuiCol_ResizeGrip]             = (ImVec4){0.44f, 0.70f, 0.20f, 0.30f};
+        colors[ImGuiCol_ResizeGripHovered]      = (ImVec4){0.50f, 0.80f, 0.26f, 0.67f};
+        colors[ImGuiCol_ResizeGripActive]       = (ImVec4){0.58f, 0.90f, 0.30f, 0.95f};
+        colors[ImGuiCol_Tab]                    = colors[ImGuiCol_Header];
+        colors[ImGuiCol_TabHovered]             = colors[ImGuiCol_HeaderHovered];
+        //colors[ImGuiCol_TabActive]              = colors[ImGuiCol_HeaderActive];
+        //colors[ImGuiCol_TabUnfocused]           = igColorConvertU32ToFloat4(igGetColorU32_Col(ImGuiCol_Tab,1.0f) & 0x00FFFFFF | 0xDD000000); // More transparent
+        //colors[ImGuiCol_TabUnfocusedActive]     = igColorConvertU32ToFloat4(igGetColorU32_Col(ImGuiCol_TabActive,1.0f) & 0x00FFFFFF | 0xDD000000);
+        colors[ImGuiCol_DockingPreview]         = colors[ImGuiCol_HeaderActive]; 
+        colors[ImGuiCol_DockingEmptyBg]         = (ImVec4){0.20f, 0.20f, 0.20f, 1.00f};
+        colors[ImGuiCol_PlotLines]              = (ImVec4){0.61f, 0.61f, 0.61f, 1.00f};
+        colors[ImGuiCol_PlotLinesHovered]       = (ImVec4){1.00f, 0.43f, 0.35f, 1.00f};
+        colors[ImGuiCol_PlotHistogram]          = (ImVec4){0.90f, 0.70f, 0.00f, 1.00f};
+        colors[ImGuiCol_PlotHistogramHovered]   = (ImVec4){1.00f, 0.60f, 0.00f, 1.00f};
+        colors[ImGuiCol_TextSelectedBg]         = (ImVec4){0.26f, 0.59f, 0.98f, 0.35f};
+        colors[ImGuiCol_DragDropTarget]         = (ImVec4){1.00f, 1.00f, 0.00f, 0.90f};
+        //colors[ImGuiCol_NavHighlight]           = colors[ImGuiCol_HeaderHovered];
+        colors[ImGuiCol_NavWindowingHighlight]  = (ImVec4){1.00f, 1.00f, 1.00f, 0.70f};
+        colors[ImGuiCol_NavWindowingDimBg]      = (ImVec4){0.80f, 0.80f, 0.80f, 0.20f};
+        colors[ImGuiCol_ModalWindowDimBg]       = (ImVec4){0.20f, 0.20f, 0.20f, 0.60f};
+        clear_color = (ImVec4){0.05f, 0.05f, 0.055f, 1.00f}; // Dark clear color for dark theme
     }
-    // REFACTOR-NOTE: Common style settings for both themes
-    style->WindowRounding = 4.0f; // Rounded corners for windows
-    style->FrameRounding = 4.0f;  // Rounded corners for frames (buttons, inputs)
-    style->GrabRounding = 4.0f;   // Rounded corners for grab handles (sliders)
+    
+    style->WindowRounding = 4.0f; 
+    style->FrameRounding = 4.0f;  
+    style->GrabRounding = 4.0f;   
     style->PopupRounding = 4.0f;
     style->ScrollbarRounding = 4.0f;
     style->TabRounding = 4.0f;
@@ -745,29 +825,34 @@ void UI_ApplyTheme(UI_Theme theme) {
     style->ScrollbarSize = 15.0f;
     style->GrabMinSize = 12.0f;
 
-    // REFACTOR-NOTE: Consider loading a custom font here.
-    // ImFontConfig font_config;
-    // font_config.FontDataOwnedByAtlas = false; // if using embedded font
-    // ioptr->Fonts->AddFontFromFileTTF("path/to/your/font.ttf", 16.0f, &font_config, ioptr->Fonts->GetGlyphRangesDefault());
-    // ioptr->Fonts->Build();
+    // REFACTOR-NOTE: Font loading. If you have a preferred font, load it here.
+    // Example:
+    // char* fontPath = SDL_GetBasePath(); // Or a specific path
+    // if (fontPath) {
+    //     char fullFontPath[512];
+    //     snprintf(fullFontPath, sizeof(fullFontPath), "%smyfont.ttf", fontPath); // Assuming font in base path
+    //     SDL_free(fontPath);
+    //     ioptr->Fonts->AddFontFromFileTTF(fullFontPath, 16.0f, NULL, NULL);
+    //     // ImGui_ImplSDLGPU3_DestroyFontsTexture(); // If fonts are changed after init
+    //     // ImGui_ImplSDLGPU3_CreateFontsTexture();
+    // }
 }
 
 
-void UI_InitStlye() { // Legacy name, kept for compatibility if called elsewhere
-    UI_ApplyTheme(current_ui_theme);
+void UI_InitStlye() { // Legacy name, kept for compatibility.
+    UI_ApplyTheme(current_ui_theme); // Apply default theme
 }
 
 void UI_Init() {
-    if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-        DEBUG_FATAL("Could not initialize SDL: %s", SDL_GetError()); // Use FATAL for critical init errors
-        // Consider throwing an exception or returning an error code instead of direct exit
-        // For a UI app, showing a message box before exit is good.
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) { // REFACTOR-NOTE: Added SDL_INIT_GAMEPAD for ImGui gamepad nav
+        DEBUG_FATAL("Could not initialize SDL: %s", SDL_GetError());
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "SDL Initialization Error", SDL_GetError(), NULL);
         exit(1);
     }
 
-    // REFACTOR-NOTE: Query display mode for better default window size or fullscreen
-    window = SDL_CreateWindow("cNES Emulator", 1280, 720, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_MAXIMIZED);
+    // REFACTOR-NOTE: Window flags: Removed SDL_WINDOW_OPENGL. SDL_WINDOW_RESIZABLE and SDL_WINDOW_MAXIMIZED are good.
+    // Consider SDL_WINDOW_HIGH_PIXEL_DENSITY for HiDPI displays if desired.
+    window = SDL_CreateWindow("cNES Emulator (SDL3_gpu)", 1280, 720, SDL_WINDOW_RESIZABLE | SDL_WINDOW_MAXIMIZED);
     if (!window) {
         DEBUG_FATAL("Could not create window: %s", SDL_GetError());
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Window Creation Error", SDL_GetError(), NULL);
@@ -775,51 +860,62 @@ void UI_Init() {
         exit(1);
     }
 
-    glContext = SDL_GL_CreateContext(window);
-    if (glContext == NULL) {
-        DEBUG_FATAL("Could not create OpenGL context: %s", SDL_GetError());
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "OpenGL Context Error", SDL_GetError(), window);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        exit(1);
-    }
-    SDL_GL_MakeCurrent(window, glContext); // Ensure context is current for GLEW
-    SDL_GL_SetSwapInterval(1); // Enable vsync
+    // Create GPU Device
+    // REFACTOR-NOTE: SDL_GPU_BACKEND_ALL allows SDL to pick the best available.
+    // True for debug_mode can be helpful during development.
 
-    glewExperimental = GL_TRUE;
-    GLenum err = glewInit();
-    if (err != GLEW_OK) { // Removed GLEW_ERROR_NO_GLX_DISPLAY check as it's usually not fatal if GL context exists
-        DEBUG_FATAL("Could not initialize GLEW: %s", glewGetErrorString(err));
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "GLEW Initialization Error", (const char*)glewGetErrorString(err), window);
-        SDL_GL_DestroyContext(glContext);
+    gpu_device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_METALLIB,
+#ifdef DEBUG
+        true,
+#else
+        false,
+#endif
+        NULL);
+    if (!gpu_device) {
+        DEBUG_FATAL("Unable to create GPU Device: %s", SDL_GetError());
         SDL_DestroyWindow(window);
         SDL_Quit();
         exit(1);
     }
 
+    // Claim window for GPU Device
+    if (!SDL_ClaimWindowForGPUDevice(gpu_device, window)) {
+        DEBUG_FATAL("Unable to claim window for GPU: %s", SDL_GetError());
+        SDL_DestroyGPUDevice(gpu_device);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        exit(1);
+    }
+    // REFACTOR-NOTE: SDL_GPU_PRESENTMODE_MAILBOX is good for low latency. FIFO is vsync. IMMEDIATE is no vsync (tearing).
+    SDL_SetGPUSwapchainParameters(gpu_device, window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, SDL_GPU_PRESENTMODE_MAILBOX);
+
+    // Setup Dear ImGui context
     ImGuiContext *ctx = igCreateContext(NULL);
-    ioptr = igGetIO_ContextPtr(ctx); // Get default context's IO
+    ioptr = igGetIO_ContextPtr(ctx);
     ioptr->ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    ioptr->ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad; // If you plan to support gamepads for UI nav
+    ioptr->ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad; 
     ioptr->ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    ioptr->ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // For multi-viewport support
+    ioptr->ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; 
 
-    // REFACTOR-NOTE: Tweak style for viewports if default is not desired
     ImGuiStyle* style = igGetStyle();
     if (ioptr->ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-        style->WindowRounding = 0.0f; // Sharp corners for main window when viewports are on
-        style->Colors[ImGuiCol_WindowBg].w = 1.0f; // Make main window bg opaque
+        style->WindowRounding = 0.0f; 
+        style->Colors[ImGuiCol_WindowBg].w = 1.0f; 
     }
 
-    ImGui_ImplSDL3_InitForOpenGL(window, glContext);
-    ImGui_ImplOpenGL3_Init("#version 130"); // Or your desired GLSL version
+    // Setup Platform/Renderer backends for SDL_gpu
+    ImGui_ImplSDL3_InitForSDLGPU(window); // SDL3 platform backend
+    ImGui_ImplSDLGPU3_InitInfo init_info = {0};
+    init_info.Device = gpu_device;
+    init_info.ColorTargetFormat = SDL_GetGPUSwapchainTextureFormat(gpu_device, window);
+    init_info.MSAASamples = SDL_GPU_SAMPLECOUNT_1; // No MSAA for ImGui by default
+    ImGui_ImplSDLGPU3_Init(&init_info);          // SDL_gpu renderer backend
 
-    UI_ApplyTheme(UI_THEME_DARK);
+    UI_ApplyTheme(UI_THEME_DARK); // Apply initial theme (also sets clear_color)
     strncpy(ui_currentRomName, "No ROM Loaded", sizeof(ui_currentRomName) -1);
     ui_currentRomName[sizeof(ui_currentRomName)-1] = '\0';
 
-    //ioptr->OptLogAutoScrollToBottom = true; // Default log auto-scroll to true
-    UI_Log("cEMU Initialized. Welcome!");
+    UI_Log("cEMU Initialized with SDL3_gpu. Welcome!");
 }
 
 void UI_SettingsWindow(NES* nes) {
@@ -829,70 +925,65 @@ void UI_SettingsWindow(NES* nes) {
     if (igBegin("Settings", &ui_showSettingsWindow, ImGuiWindowFlags_None)) {
         if (igBeginTabBar("SettingsTabs", 0)) {
             if (igBeginTabItem("Display", NULL, 0)) {
-                igText("Theme:"); igSameLine(0,0);
+                igText("Theme:"); igSameLine(0,5);
                 if (igRadioButton_Bool("Dark", current_ui_theme == UI_THEME_DARK)) UI_ApplyTheme(UI_THEME_DARK);
-                igSameLine(0,0);
+                igSameLine(0,5);
                 if (igRadioButton_Bool("Light", current_ui_theme == UI_THEME_LIGHT)) UI_ApplyTheme(UI_THEME_LIGHT);
                 igSeparator();
                 if (igCheckbox("Fullscreen (Window)", &ui_sdl_fullscreen)) UI_ToggleFullscreen();
                 igSameLine(0, 10); igTextDisabled("(F11)");
-                // REFACTOR-NOTE: Add font scaling options, game screen scaling options here
+                // REFACTOR-NOTE: Add font scaling options, game screen aspect ratio/scaling options here.
+                igTextDisabled("More display settings (font, scaling) can be added here.");
                 igEndTabItem();
             }
             if (igBeginTabItem("Audio", NULL, 0)) {
-                // REFACTOR-NOTE: Connect this to actual APU volume control
+                // REFACTOR-NOTE: Connect this to actual APU volume control.
                 if (igSliderFloat("Master Volume", &ui_master_volume, 0.0f, 1.0f, "%.2f", 0)) {
-                    // Example: APU_SetMasterVolume(nes->apu, ui_master_volume);
+                    // if (nes && nes->apu) APU_SetMasterVolume(nes->apu, ui_master_volume);
                     UI_Log("Master volume (placeholder) set to: %.2f", ui_master_volume);
                 }
-                igTextDisabled("Audio settings are placeholders.");
-                // REFACTOR-NOTE: Add options for audio buffer size, sample rate (if configurable), APU channel toggles
+                // REFACTOR-NOTE: Add options for audio buffer size, sample rate, APU channel toggles.
+                igTextDisabled("More audio settings (buffer, channels) can be added here.");
                 igEndTabItem();
             }
             if (igBeginTabItem("Input", NULL, 0)) {
                 igText("Controller 1 Mapping (NES):");
-                // REFACTOR-NOTE: Implement a visual key mapping UI here.
-                // For now, just list current hardcoded keys.
                 igText("Up: W, Down: S, Left: A, Right: D");
                 igText("A: K, B: J, Select: RShift, Start: Enter");
                 igSeparator();
-                igText("Controller 2 Mapping:");
-                igTextDisabled("TODO: Add key mapping UI for Controller 2.");
+                igTextDisabled("TODO: Add remappable key bindings UI for Controller 1 & 2.");
+                // REFACTOR-NOTE: Implement a visual key mapping UI.
                 igEndTabItem();
             }
-            // REFACTOR-NOTE: Add "Paths" tab for save states, screenshots, ROMs directory.
-            // REFACTOR-NOTE: Add "Advanced" tab for emulation tweaks if any.
+            // REFACTOR-NOTE: Add "Paths" tab for save states, screenshots, default ROMs directory.
+            // REFACTOR-NOTE: Add "Advanced" tab for emulation tweaks (e.g., CPU/PPU cycle accuracy options if available).
             igEndTabBar();
         }
         igSeparator();
-        // REFACTOR-NOTE: This positioning for close button can be tricky with auto-resize.
-        // Simpler: just let it flow, or use a dedicated footer child window.
-        // ImVec2 window_size; igGetWindowSize(&window_size); ImVec2 button_size = {80, 0};
-        // float offset_x = window_size.x - button_size.x - igGetStyle()->WindowPadding.x;
-        // igSetCursorPosX(offset_x > 0 ? offset_x : igGetCursorPosX());
-        if (igButton("Close", (ImVec2){-FLT_MIN,0})) ui_showSettingsWindow = false; // Full width
+        if (igButton("Close", (ImVec2){-FLT_MIN,0})) ui_showSettingsWindow = false;
     }
     igEnd();
 }
 
 void UI_DrawAboutWindow() {
     if (!ui_showAboutWindow) return;
-    igSetNextWindowSize((ImVec2){350, 220}, ImGuiCond_FirstUseEver);
+    igSetNextWindowSize((ImVec2){400, 250}, ImGuiCond_FirstUseEver); // REFACTOR-NOTE: Slightly larger for more info
     if (igBegin("About cEMU", &ui_showAboutWindow, ImGuiWindowFlags_AlwaysAutoResize)) {
-        igText("cEMU - A NES Emulator"); // REFACTOR-NOTE: Update with your project name/details
-        igText("Version: 0.1.alpha (SDL3 + cimgui)"); // REFACTOR-NOTE: Update version
-        igText("Author: [Your Name/Handle Here]"); // REFACTOR-NOTE: Fill this in!
+        igText("cEMU - A NES Emulator Project");
+        igText("Version: 0.2.sdl3gpu (SDL3 + cimgui + SDL_gpu)"); // REFACTOR-NOTE: Updated version
+        igText("Author: Your Name/Handle Here"); // REFACTOR-NOTE: Fill this in!
         igSeparator();
-        igText("Powered by Dear ImGui (cimgui bindings) and SDL3.");
-        igText("OpenGL rendering via GLEW.");
+        igText("Powered by Dear ImGui (cimgui bindings) and SDL3 with SDL_gpu.");
+        igText("This project is for demonstration and learning purposes.");
         igSeparator();
-        // REFACTOR-NOTE: Add a link to your project's GitHub or website if available.
-        // if (igButton("Project on GitHub", (ImVec2){-FLT_MIN,0})) { /* SDL_OpenURL("your_link_here"); */ }
+        // REFACTOR-NOTE: Add a link to your project's GitHub or website.
+        if (igButton("Project on GitHub (Example)", (ImVec2){-FLT_MIN,0})) { 
+            SDL_OpenURL("https://github.com/RileyWebb/cNES"); // Example URL
+        }
         if (igButton("OK", (ImVec2){-FLT_MIN,0})) ui_showAboutWindow = false;
     }
     igEnd();
 }
-
 
 static void UI_ShowAllDebugWindows() {
     ui_showCpuWindow = true;
@@ -905,33 +996,16 @@ static void UI_HideAllDebugWindows() {
     ui_showCpuWindow = false;
     ui_showPpuViewer = false;
     ui_showMemoryViewer = false;
-    // ui_showLog = false; // Keep log usually visible or let user decide
+    // ui_showLog = false; // Log is often useful to keep visible
     ui_showDisassembler = false;
 }
 
 static void UI_DebugToolbar(NES* nes) {
     if (!ui_showToolbar) return;
 
-    // REFACTOR-NOTE: This toolbar could be a dockable window itself or part of the main menu's viewport.
-    // For simplicity, keeping it as a separate small window.
-    // Using ImGuiWindowFlags_NoFocusOnAppearing to prevent it from stealing focus on startup
-    // Consider using icons (e.g. FontAwesome) for a more compact toolbar.
-    ImGuiViewport* viewport = igGetMainViewport();
-    // Position it below the main menu bar if menu bar is part of the main viewport.
-    // This is a bit manual; could be improved with a dedicated toolbar area in docking.
-    float menuBarHeight = 0; // Estimate or get actual if possible
-    // if (igFindWindowByName("##MainMenuBar")) menuBarHeight = igGetWindowSize(igFindWindowByName("##MainMenuBar")).y;
-    
-    // A simpler way: just make it a regular small window that can be docked or float.
-    // igSetNextWindowPos((ImVec2){viewport->WorkPos.x, viewport->WorkPos.y + menuBarHeight}, ImGuiCond_Always, (ImVec2){0,0});
-    // igSetNextWindowSize((ImVec2){viewport->WorkSize.x, 40}, ImGuiCond_Always);
-
-    if (igBegin("Debug Controls", &ui_showToolbar, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDocking )) {
-        // Position manually if not docking it:
-        // igSetWindowPos_Vec2((ImVec2){viewport->Pos.x, viewport->Pos.y + 20}, ImGuiCond_Appearing); // Example position
-
-
-        const char* pause_label = ui_paused ? "Resume (F6)" : "Pause (F6)"; // ICON_FA_PLAY / ICON_FA_PAUSE
+    // This toolbar is a regular dockable window.
+    if (igBegin("Debug Controls", &ui_showToolbar, ImGuiWindowFlags_None )) { // Removed restrictive flags to allow docking/resizing
+        const char* pause_label = ui_paused ? "Resume (F6)" : "Pause (F6)";
         if (igButton(pause_label, (ImVec2){0,0})) UI_TogglePause(nes);
         igSameLine(0, 4);
         if (igButton("Step CPU (F7)", (ImVec2){0,0})) { if (ui_paused && nes && nes->cpu) NES_Step(nes); else UI_Log("Can only step CPU when paused."); }
@@ -939,30 +1013,28 @@ static void UI_DebugToolbar(NES* nes) {
         if (igButton("Step Frame (F8)", (ImVec2){0,0})) { if (ui_paused && nes) UI_StepFrame(nes); else UI_Log("Can only step frame when paused.");}
         igSameLine(0, 4);
         if (igButton("Reset (F5)", (ImVec2){0,0})) UI_Reset(nes);
-        igSameLine(0,15); // Separator space
-        if (igButton("PPU", (ImVec2){0,0})) ui_showPpuViewer = !ui_showPpuViewer;
-        igSameLine(0, 4);
-        if (igButton("Memory", (ImVec2){0,0})) ui_showMemoryViewer = !ui_showMemoryViewer;
-        igSameLine(0, 4);
-        if (igButton("Log", (ImVec2){0,0})) ui_showLog = !ui_showLog;
-        igSameLine(0, 4);
-        if (igButton("CPU", (ImVec2){0,0})) ui_showCpuWindow = !ui_showCpuWindow;
-        igSameLine(0, 4);
-        if (igButton("Disasm", (ImVec2){0,0})) ui_showDisassembler = !ui_showDisassembler;
+        
+        igSeparator(); // Visually separate control groups
+        
+        // Toggles for debug windows (can also be in View menu)
+        igCheckbox("CPU", &ui_showCpuWindow); igSameLine(0,4);
+        igCheckbox("PPU", &ui_showPpuViewer); igSameLine(0,4);
+        igCheckbox("Memory", &ui_showMemoryViewer); igSameLine(0,4);
+        igCheckbox("Log", &ui_showLog); igSameLine(0,4);
+        igCheckbox("Disasm", &ui_showDisassembler);
     }
     igEnd();
 }
 
 static void UI_DrawDebugMenu() {
     if (igBeginMenu("Debug", true)) {
-        // REFACTOR-NOTE: Use checkmarks to show visibility
         igMenuItem_Bool("CPU Registers", NULL, &ui_showCpuWindow, true);
         igMenuItem_Bool("PPU Viewer", NULL, &ui_showPpuViewer, true);
         igMenuItem_Bool("Memory Viewer", NULL, &ui_showMemoryViewer, true);
         igMenuItem_Bool("Log Window", NULL, &ui_showLog, true);
         igMenuItem_Bool("Disassembler", NULL, &ui_showDisassembler, true);
         igSeparator();
-        igMenuItem_Bool("Debug Toolbar", NULL, &ui_showToolbar, true);
+        igMenuItem_Bool("Debug Controls Window", NULL, &ui_showToolbar, true); // Renamed from Toolbar
         igSeparator();
         if (igMenuItem_Bool("Show All Debug Windows", NULL, false, true)) UI_ShowAllDebugWindows();
         if (igMenuItem_Bool("Hide All Debug Windows", NULL, false, true)) UI_HideAllDebugWindows();
@@ -971,39 +1043,39 @@ static void UI_DrawDebugMenu() {
 }
 
 static void UI_CpuWindow(NES* nes) {
-    if (!ui_showCpuWindow || !nes || !nes->cpu) {
+    if (!ui_showCpuWindow) return;
+    if (!nes || !nes->cpu) {
          if (ui_showCpuWindow && (!nes || !nes->cpu)) ui_showCpuWindow = false;
         return;
     }
-    if (igBegin("CPU Registers", &ui_showCpuWindow, ImGuiWindowFlags_None)) { // REFACTOR-NOTE: Consider ImGuiWindowFlags_AlwaysAutoResize
-        // igTextColored((ImVec4){1.0f, 0.0f, 0.0f}, "CPU Registers"); // ICON_FA_MICROCHIP
-        igText("A:  0x%02X (%d)", nes->cpu->a, nes->cpu->a);
-        igText("X:  0x%02X (%d)", nes->cpu->x, nes->cpu->x);
-        igText("Y:  0x%02X (%d)", nes->cpu->y, nes->cpu->y);
-        igText("SP: 0x01%02X", nes->cpu->sp); // Stack is on page 0x0100
+    if (igBegin("CPU Registers", &ui_showCpuWindow, ImGuiWindowFlags_None)) { 
+        igText("A:  0x%02X (%3d)", nes->cpu->a, nes->cpu->a); // %3d for consistent spacing
+        igText("X:  0x%02X (%3d)", nes->cpu->x, nes->cpu->x);
+        igText("Y:  0x%02X (%3d)", nes->cpu->y, nes->cpu->y);
+        igText("SP: 0x01%02X", nes->cpu->sp); 
         igText("PC: 0x%04X", nes->cpu->pc);
         
         igText("Status: 0x%02X [", nes->cpu->status);
         igSameLine(0,0);
-        // N V - B D I Z C
-        const char* flag_names = "NV-BDIZC";
-        for (int i = 7; i >= 0; i--) { // Iterate from N (bit 7) down to C (bit 0)
+        const char* flag_names = "NV-BDIZC"; // Bit 5 is often shown as '-', though it has a value in the register
+        for (int i = 7; i >= 0; i--) { 
             bool is_set = (nes->cpu->status >> i) & 1;
-            // Bit 5 ('-') is always set in status register reads, but can be conceptually clear
-            if (i == 5) is_set = true; // Unused flag, often shown as set.
+            // Bit 5 ('-') is conventionally shown as set if its bit in the status byte is 1.
+            // The B flag (bit 4) has two meanings depending on context (interrupt vs PHP/BRK).
+            // Here we just show the raw status register bits.
             
             if (is_set) {
-                igTextColored((ImVec4){0.2f, 1.0f, 0.2f, 1.0f}, "%c", flag_names[7-i]);
+                igTextColored((ImVec4){0.3f, 1.0f, 0.3f, 1.0f}, "%c", flag_names[7-i]); // Green for set
             } else {
-                igTextColored((ImVec4){0.8f, 0.2f, 0.2f, 1.0f}, "%c", flag_names[7-i]);
+                igTextColored((ImVec4){1.0f, 0.4f, 0.4f, 1.0f}, "%c", flag_names[7-i]); // Red for clear
             }
             if (i > 0) igSameLine(0,2);
         }
         igSameLine(0,0); igText("]");
         igNewLine();
         igText("Total Cycles: %llu", (unsigned long long)nes->cpu->total_cycles);
-        // REFACTOR-NOTE: Add display for pending interrupts (NMI, IRQ)
-        // REFACTOR-NOTE: Add instruction timing/cycle count for current/last instruction
+        // REFACTOR-NOTE: Add display for pending interrupts (NMI, IRQ lines state from bus/CPU).
+        // REFACTOR-NOTE: Add instruction timing/cycle count for current/last instruction (requires more detailed CPU state).
     }
     igEnd();
 }
@@ -1017,124 +1089,207 @@ void UI_DrawMainMenuBar(NES* nes) {
             if (igMenuItem_Bool("Reset", "F5", false, rom_loaded)) UI_Reset(nes);
             if (igMenuItem_Bool("Step CPU Instruction", "F7", false, rom_loaded && ui_paused)) { if(nes && nes->cpu) NES_Step(nes); }
             if (igMenuItem_Bool("Step Frame", "F8", false, rom_loaded && ui_paused)) UI_StepFrame(nes);
-            // REFACTOR-NOTE: Add speed controls (e.g., 50%, 100%, 200%, turbo)
+            // REFACTOR-NOTE: Add speed controls (e.g., 50%, 100%, 200%, turbo mode). Would require timing adjustments in main loop.
             igEndMenu();
         }
         if (igBeginMenu("View", true)) {
-            igMenuItem_Bool("Game Screen", NULL, NULL, true); // Game Screen always conceptually "visible" if part of dock
+            igMenuItem_Bool("Game Screen", NULL, &ui_showGameScreen, true); // Toggle visibility of game screen window
+            igMenuItem_Bool("CPU Registers", NULL, &ui_showCpuWindow, true);
             igMenuItem_Bool("PPU Viewer", NULL, &ui_showPpuViewer, true);
-            igMenuItem_Bool("Log Window", NULL, &ui_showLog, true);
             igMenuItem_Bool("Memory Viewer", NULL, &ui_showMemoryViewer, true);
             igMenuItem_Bool("Disassembler", NULL, &ui_showDisassembler, true);
-            igMenuItem_Bool("CPU Registers", NULL, &ui_showCpuWindow, true);
-            igMenuItem_Bool("Debug Toolbar", NULL, &ui_showToolbar, true);
+            igMenuItem_Bool("Log Window", NULL, &ui_showLog, true);
+            igMenuItem_Bool("Debug Controls", NULL, &ui_showToolbar, true); // Matches window title
             igSeparator();
             if (igMenuItem_Bool("Toggle Fullscreen", "F11", ui_sdl_fullscreen, true)) UI_ToggleFullscreen();
             igEndMenu();
         }
-        UI_DrawDebugMenu(); // Keep as separate for more detailed debug toggles
+        UI_DrawDebugMenu(); 
         if (igBeginMenu("Options", true)) {
             if (igMenuItem_Bool("Settings...", "F10", ui_showSettingsWindow, true)) ui_showSettingsWindow = !ui_showSettingsWindow;
             igEndMenu();
         }
         if (igBeginMenu("Help", true)) {
             if (igMenuItem_Bool("About cEMU", NULL, false, true)) ui_showAboutWindow = true;
-            // REFACTOR-NOTE: Add "View Controls" or "Help Topics" menu item
+            // REFACTOR-NOTE: Add "View Controls" or "Help Topics" menu item with keybinds, basic usage.
             igEndMenu();
         }
         igEndMainMenuBar();
     }
 }
 
-static GLuint ppu_game_texture = 0; // Moved to static global for game screen
 
-void UI_GameScreenWindow(NES* nes) {
-    // REFACTOR-NOTE: Add ImGuiWindowFlags_NoScrollbar and ImGuiWindowFlags_NoScrollWithMouse if you handle all scaling.
-    // Remove ImGuiWindowFlags_NoCollapse if you want it collapsable.
-    igPushStyleVar_Vec2(ImGuiStyleVar_WindowPadding, (ImVec2){0,0}); // No padding for the game screen window
-    if (igBegin("Game Screen", NULL, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-        if (!nes || !nes->ppu) {
-             igTextColored((ImVec4){1.f,1.f,0.f,1.f}, "No NES/PPU context or ROM not loaded.");
+void UI_GameScreenWindow(NES* nes)
+{
+    if (!ui_showGameScreen) return;
+
+    igPushStyleVar_Vec2(ImGuiStyleVar_WindowPadding, (ImVec2){0,0});
+    if (igBegin("Game Screen", &ui_showGameScreen, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+        if (!gpu_device) {
+             igTextColored((ImVec4){1.f,1.f,0.f,1.f}, "Error: No SDL_GPUDevice available.");
+        } else if (!nes || !nes->ppu || !nes->ppu->framebuffer) {
+             ImVec2 avail_size; igGetContentRegionAvail(&avail_size);
+             const char* msg = "No ROM loaded or PPU not ready.";
+             ImVec2 text_size; igCalcTextSize(&text_size, msg, NULL, false, 0.0f);
+             igSetCursorPosX((avail_size.x - text_size.x) * 0.5f);
+             igSetCursorPosY((avail_size.y - text_size.y) * 0.5f);
+             igTextDisabled("%s", msg);
         } else {
-            if (ppu_game_texture == 0) {
-                glGenTextures(1, &ppu_game_texture);
-                glBindTexture(GL_TEXTURE_2D, ppu_game_texture);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST); // Use GL_LINEAR for smoother scaling if preferred
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-                // Framebuffer is ARGB (0xAARRGGBB), GL_RGBA expects RGBA. Need conversion or ensure framebuffer is RGBA.
-                // Assuming nes->ppu->framebuffer is already in a format GL_RGBA can use directly (like actual R,G,B,A byte order).
-                // If framebuffer is, for example, 0xAARRGGBB (uint32_t), it needs conversion before glTexSubImage2D.
-                // For now, assuming framebuffer is raw RGBA pixel data.
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 256, 240, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL); // Use GL_UNSIGNED_BYTE if framebuffer is byte array
-                // If framebuffer is uint32_t array of packed colors (e.g. 0xAABBGGRR or 0xRRGGBBAA), use GL_UNSIGNED_INT_8_8_8_8_REV or GL_UNSIGNED_INT_8_8_8_8
-                // and ensure byte order matches what OpenGL expects for RGBA.
-                // For this example, assuming nes->ppu->framebuffer points to an array of bytes: R, G, B, A, R, G, B, A, ...
-                glBindTexture(GL_TEXTURE_2D, 0);
+            if (ppu_game_texture == NULL) {
+                SDL_GPUTextureCreateInfo texture_info = {0};
+                texture_info.type = SDL_GPU_TEXTURETYPE_2D;
+                texture_info.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+                texture_info.width = 256;
+                texture_info.height = 240;
+                texture_info.layer_count_or_depth = 1;
+                texture_info.num_levels = 1;
+                texture_info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;// | SDL_GPU_TEXTUREUSAGE_; // Allow copy to it
+                ppu_game_texture = SDL_CreateGPUTexture(gpu_device, &texture_info);
+                if (!ppu_game_texture) {
+                    UI_Log("GameScreen: Failed to create PPU game texture: %s", SDL_GetError());
+                    igTextColored((ImVec4){1.f,0.f,0.f,1.f}, "Failed to create PPU game texture.");
+                    igEnd(); igPopStyleVar(1); return;
+                }
             }
-            glBindTexture(GL_TEXTURE_2D, ppu_game_texture);
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 256, 240, GL_RGBA, GL_UNSIGNED_BYTE, nes->ppu->framebuffer); // Or GL_UNSIGNED_INT_8_8_8_8 if uint32_t array
-            glBindTexture(GL_TEXTURE_2D, 0);
 
-            // REFACTOR-NOTE: Implement aspect ratio correction and scaling here.
+            if (ppu_game_sampler == NULL) {
+                SDL_GPUSamplerCreateInfo sampler_info = {0};
+                sampler_info.min_filter = SDL_GPU_FILTER_NEAREST;
+                sampler_info.mag_filter = SDL_GPU_FILTER_NEAREST;
+                sampler_info.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+                sampler_info.address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+                sampler_info.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+                sampler_info.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
+                ppu_game_sampler = SDL_CreateGPUSampler(gpu_device, &sampler_info);
+                 if (!ppu_game_sampler) {
+                    UI_Log("GameScreen: Failed to create PPU game sampler: %s", SDL_GetError());
+                    igTextColored((ImVec4){1.f,0.f,0.f,1.f}, "Failed to create PPU game sampler.");
+                    igEnd(); igPopStyleVar(1); return;
+                }
+            }
+
+            if (ppu_game_transfer_buffer == NULL) { // Used renamed variable
+                SDL_GPUTransferBufferCreateInfo transfer_create_info = {0};
+                transfer_create_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+                transfer_create_info.size = 256 * 240 * 4 * 8;
+                ppu_game_transfer_buffer = SDL_CreateGPUTransferBuffer(gpu_device, &transfer_create_info);
+                if (!ppu_game_transfer_buffer) {
+                    UI_Log("GameScreen: Failed to create PPU transfer buffer: %s", SDL_GetError());
+                    igTextColored((ImVec4){1.f,0.f,0.f,1.f}, "Failed to create PPU transfer buffer.");
+                    igEnd(); igPopStyleVar(1); return;
+                }
+            }
+
+            if (ppu_game_texture && nes->ppu->framebuffer) {
+                // Correctly copy data to transfer buffer first
+                void* mapped_memory = SDL_MapGPUTransferBuffer(gpu_device, ppu_game_transfer_buffer, false);
+                if (!mapped_memory) {
+                     UI_Log("GameScreen: Failed to map GPU transfer buffer: %s", SDL_GetError());
+                } else {
+                    memcpy(mapped_memory, nes->ppu->framebuffer, 256 * 240 * 4);
+                    SDL_UnmapGPUTransferBuffer(gpu_device, ppu_game_transfer_buffer);
+                    // Data is now in ppu_game_transfer_buffer
+                    SDL_GPUCommandBuffer* cmd_buffer = SDL_AcquireGPUCommandBuffer(gpu_device);
+                    if (cmd_buffer) {
+                        SDL_GPUCopyPass* copy_pass = SDL_BeginGPUCopyPass(cmd_buffer);
+                        if (copy_pass) {
+                            SDL_UploadToGPUTexture(
+                                copy_pass,
+                                &(SDL_GPUTextureTransferInfo) {
+                                    .transfer_buffer = ppu_game_transfer_buffer,
+                                    .offset = 0, /* Zeros out the rest */
+                                },
+                                &(SDL_GPUTextureRegion){
+                                    .texture = ppu_game_texture,
+                                    .w = 256,
+                                    .h = 240,
+                                    .d = 1
+                                },
+                                false
+                            );
+                            SDL_EndGPUCopyPass(copy_pass);
+                        } else {
+                            UI_Log("GameScreen: Failed to begin GPU copy pass: %s", SDL_GetError());
+                        }
+                        SDL_SubmitGPUCommandBuffer(cmd_buffer); // Submit this specific command buffer
+                        //nes->ppu->frame_ready = false;
+                    } else {
+                         UI_Log("GameScreen: Failed to acquire GPU command buffer for texture upload: %s", SDL_GetError());
+                    }
+                }
+            }
+
             ImVec2 window_content_region_size;
             igGetContentRegionAvail(&window_content_region_size);
-
             float aspect_ratio = 256.0f / 240.0f;
             ImVec2 image_size = window_content_region_size;
 
-            if (image_size.x / aspect_ratio > image_size.y) { // Limited by height
-                image_size.x = image_size.y * aspect_ratio;
-            } else { // Limited by width
-                image_size.y = image_size.x / aspect_ratio;
+            if (window_content_region_size.x / aspect_ratio > window_content_region_size.y) {
+                image_size.x = window_content_region_size.y * aspect_ratio;
+            } else {
+                image_size.y = window_content_region_size.x / aspect_ratio;
             }
-            
-            // Center the image
-            ImVec2 cursor_pos;
-            igGetCursorPos(&cursor_pos);
-            cursor_pos.x += (window_content_region_size.x - image_size.x) * 0.5f;
-            cursor_pos.y += (window_content_region_size.y - image_size.y) * 0.5f;
-            igSetCursorPos(cursor_pos);
 
-            igImage((ImTextureID)(intptr_t)ppu_game_texture, image_size, (ImVec2){0, 0}, (ImVec2){1, 1});
+            float offset_x = (window_content_region_size.x - image_size.x) * 0.5f;
+            float offset_y = (window_content_region_size.y - image_size.y) * 0.5f;
+            igSetCursorPos((ImVec2){igGetCursorPosX() + offset_x, igGetCursorPosY() + offset_y});
+
+            if (ppu_game_texture && ppu_game_sampler) {
+                 SDL_GPUTextureSamplerBinding texture_sampler_binding = {ppu_game_texture, ppu_game_sampler};
+                 igImage((ImTextureID)(uintptr_t)&texture_sampler_binding, image_size, (ImVec2){0, 0}, (ImVec2){1, 1});
+            } else {
+                igText("Game texture or sampler not ready.");
+            }
         }
     }
     igEnd();
-    igPopStyleVar(1); // WindowPadding
+    igPopStyleVar(1);
 }
 
 void UI_DrawStatusBar(NES* nes) {
-    // Flags to make it behave like a status bar but still dockable
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoDecoration;
-    float status_bar_height = igGetFrameHeightWithSpacing() + igGetStyle()->WindowPadding.y; // Small padding
-    igSetNextWindowSizeConstraints((ImVec2){0, status_bar_height},(ImVec2){FLT_MAX, status_bar_height}, NULL, NULL);
+    // REFACTOR-NOTE: Status bar is now a dockable window. Its height can be managed by docking or constraints.
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoTitleBar;
+    // Set a minimum height for the status bar if desired, though docking might override explicit sizing.
+    // float status_bar_height = igGetFrameHeight() + igGetStyle()->WindowPadding.y * 2.0f;
+    // igSetNextWindowSizeConstraints((ImVec2){0, status_bar_height},(ImVec2){FLT_MAX, status_bar_height}, NULL, NULL);
 
-
-    if (igBegin("Status Bar", NULL, flags)) 
-    {
-        Uint32 currentTime = SDL_GetTicks();
-        //if (currentTime > lastFrameTimeForStatus + 500) {
-        //    lastFrameTimeForStatus = currentTime;
-        //}
+    if (igBegin("Status Bar", NULL, flags))  {
+        // Calculate FPS (simple moving average or per-second updates)
+        static Uint32 frame_count = 0;
+        static Uint32 last_fps_time = 0;
+        Uint32 current_ticks = SDL_GetTicks();
+        frame_count++;
+        if (current_ticks - last_fps_time >= 1000) {
+            ui_fps = (float)frame_count / ((current_ticks - last_fps_time)/1000.0f);
+            last_fps_time = current_ticks;
+            frame_count = 0;
+        }
+        
         igText("FPS: %.1f | ROM: %s | %s", ui_fps, ui_currentRomName, ui_paused ? "Paused" : "Running");
-        const char* version_text = "cEMU v0.2";
+        
+        const char* version_text = "cEMU v0.2.sdl3gpu"; // REFACTOR-NOTE: Consistent versioning
         ImVec2 version_text_size;
         igCalcTextSize(&version_text_size, version_text, NULL, false, 0);
-        float version_text_width = version_text_size.x;
-        ImVec2 maxRegion;
-        igGetContentRegionAvail(&maxRegion);
-        igSameLine(maxRegion.x - version_text_width - igGetStyle()->ItemSpacing.x, 0);
+        
+        ImVec2 content_avail;
+        igGetContentRegionAvail(&content_avail);
+        
+        // Align version text to the right
+        float version_pos_x = content_avail.x - version_text_size.x - igGetStyle()->ItemSpacing.x;
+        if (version_pos_x > igGetCursorPosX()) { // Ensure it doesn't overlap with left text
+             igSameLine(version_pos_x, 0);
+        } else { // Not enough space, just put it on the same line if possible
+             igSameLine(0, igGetStyle()->ItemSpacing.x * 2);
+        }
         igTextDisabled("%s", version_text);
     }
     igEnd();
 }
 
-// REFACTOR-NOTE: Consolidated main drawing logic.
 void UI_Draw(NES* nes) {
     ImGuiViewport* viewport = igGetMainViewport();
-    igSetNextWindowPos(viewport->WorkPos, ImGuiCond_Always, (ImVec2){0,0}); // Use WorkPos
-    igSetNextWindowSize(viewport->WorkSize, ImGuiCond_Always);    // Use WorkSize
+    igSetNextWindowPos(viewport->WorkPos, ImGuiCond_Always, (ImVec2){0,0});
+    igSetNextWindowSize(viewport->WorkSize, ImGuiCond_Always);   
     igSetNextWindowViewport(viewport->ID);
 
     ImGuiWindowFlags host_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
@@ -1144,99 +1299,82 @@ void UI_Draw(NES* nes) {
     igPushStyleVar_Float(ImGuiStyleVar_WindowBorderSize, 0.0f);
     igPushStyleVar_Vec2(ImGuiStyleVar_WindowPadding, (ImVec2){0.0f, 0.0f});
     
-    // This is the main host window for the dockspace
     igBegin("cEMU_MainHost", NULL, host_flags);
     igPopStyleVar(3);
 
     ImGuiID dockspace_id = igGetID_Str("cEMU_DockSpace_Main");
     igDockSpace(dockspace_id, (ImVec2){0.0f, 0.0f}, ImGuiDockNodeFlags_PassthruCentralNode, NULL);
 
-    // REFACTOR-NOTE: Apply default docking layout on the first frame
     if (ui_first_frame) {
         ui_first_frame = false;
-        igDockBuilderRemoveNode(dockspace_id); // Clear out existing layout (if any)
+        igDockBuilderRemoveNode(dockspace_id); 
         igDockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_DockSpace);
         igDockBuilderSetNodeSize(dockspace_id, viewport->WorkSize);
 
-        ImGuiID dock_main_id = dockspace_id;
+        ImGuiID dock_main_id = dockspace_id; 
+        ImGuiID dock_id_statusbar;
+        ImGuiID dock_id_log;
+        ImGuiID dock_id_right;
+        ImGuiID dock_id_left;
 
-        ImGuiID dock_id_statusbar = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Down, 0.08f, &dock_id_statusbar, &dock_main_id);
-        ImGuiID dock_right_id = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Right, 0.25f, NULL, &dock_main_id);
-        ImGuiID dock_left_id = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Left, 0.22f, NULL, &dock_main_id);
-        ImGuiID dock_bottom_id = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Down, 0.28f, NULL, &dock_main_id);
+        // Split layout: Status bar at bottom, then Log above status, then main area split left/center/right
+        dock_id_statusbar = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Down, 0.05f, NULL, &dock_main_id);
+        dock_id_log = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Down, 0.25f, NULL, &dock_main_id); // Log takes 25% of remaining
+        dock_id_right = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Right, 0.25f, NULL, &dock_main_id); // Right panel 25%
+        dock_id_left = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Left, 0.22f, NULL, &dock_main_id);  // Left panel 22%
+        // Center panel is what remains of dock_main_id
 
- // 8% height for status bar
-        //igDockBuilderRemoveNode(dock_id_statusbar);
+        igDockBuilderDockWindow("Status Bar", dock_id_statusbar);
+        igDockBuilderDockWindow("Log", dock_id_log);
+        igDockBuilderDockWindow("Game Screen", dock_main_id); 
+        igDockBuilderDockWindow("CPU Registers", dock_id_left);
+        igDockBuilderDockWindow("Disassembler", dock_id_left); 
+        igDockBuilderDockWindow("PPU Viewer", dock_id_right);
+        igDockBuilderDockWindow("Memory Viewer (CPU Bus)", dock_id_right);
+        igDockBuilderDockWindow("Debug Controls", dock_id_left); // Add debug controls to left panel too
 
-        //igDockBuilderSetNodeSize(dock_id_statusbar, (ImVec2){viewport->WorkSize.x, viewport->WorkSize.y * 0.08f});
-        // ImGuiID dock_bottom_right_id = igDockBuilderSplitNode(dock_bottom_id, ImGuiDir_Right, 0.40f, NULL, &dock_bottom_id);
-
-        //igDockBuilderAddNode(dock_id_statusbar, );
-        igDockBuilderSetNodeSize(dock_id_statusbar, (ImVec2){viewport->WorkSize.x, igGetFrameHeightWithSpacing() + igGetStyle()->WindowPadding.y});
+        // Make status bar non-interactive for docking/resizing
+        ImGuiDockNode* status_node = igDockBuilderGetNode(dock_id_statusbar);
+        if (status_node) ImGuiDockNode_SetLocalFlags(status_node, ImGuiDockNodeFlags_NoTabBar | ImGuiDockNodeFlags_NoUndocking | ImGuiDockNodeFlags_NoResize);
         
-        igDockBuilderDockWindow("Status Bar", dock_id_statusbar); // Dock the status bar
-
-        igDockBuilderDockWindow("Game Screen", dock_main_id); // Central
-        igDockBuilderDockWindow("CPU Registers", dock_left_id);
-        igDockBuilderDockWindow("Disassembler", dock_left_id); // Tabbed with CPU
+        igDockBuilderFinish(dockspace_id);
         
-        igDockBuilderDockWindow("PPU Viewer", dock_right_id);
-        igDockBuilderDockWindow("Memory Viewer (CPU Bus)", dock_right_id); // Tabbed with PPU
-        
-        igDockBuilderDockWindow("Log", dock_bottom_id);
-        // igDockBuilderDockWindow("Other Tool", dock_bottom_right_id);
-
-        ImGuiDockNode_SetLocalFlags(igDockBuilderGetNode(dock_id_statusbar), ImGuiDockNodeFlags_NoTabBar | ImGuiDockNodeFlags_NoUndocking | ImGuiDockNodeFlags_NoResize);
-        
-        // Ensure all windows that should be part of default layout are visible initially
-        ui_showGameScreen = true; // Assuming a bool for this, or just let it dock
+        // Ensure windows part of the default layout are initially set to visible
+        ui_showGameScreen = true;
         ui_showCpuWindow = true;
         ui_showDisassembler = true;
         ui_showPpuViewer = true;
         ui_showMemoryViewer = true;
         ui_showLog = true;
-
-
-        igDockBuilderFinish(dockspace_id);
+        ui_showToolbar = true; // For Debug Controls window
     }
 
     UI_DrawMainMenuBar(nes);
-    // The DebugToolbar is now a regular window, it will be drawn with others if ui_showToolbar is true.
-    // If you want it always above the dockspace but below menu, it needs special handling or to be part of the menubar itself.
-
     igEnd(); // End of "cEMU_MainHost"
 
     // --- Draw all dockable windows ---
-    // These will now dock into "cEMU_DockSpace_Main"
-    UI_GameScreenWindow(nes); // This should be a top-level call to allow docking
-
-    if (ui_showCpuWindow && nes) UI_CpuWindow(nes);
-    if (ui_showPpuViewer && nes) UI_PPUViewer(nes);
+    //if (ui_showGameScreen) UI_GameScreenWindow(nes); // Must be called for docking to work, even if hidden by user later
+    if (ui_showCpuWindow) UI_CpuWindow(nes);
+    //if (ui_showPpuViewer) UI_PPUViewer(nes);
     if (ui_showLog) UI_LogWindow();
-    if (ui_showMemoryViewer && nes) UI_MemoryViewer(nes);
-    if (ui_showDisassembler && nes) UI_DrawDisassembler(nes);
+    if (ui_showMemoryViewer) UI_MemoryViewer(nes);
+    if (ui_showDisassembler) UI_DrawDisassembler(nes);
+    if (ui_showToolbar) UI_DebugToolbar(nes); // Debug Controls window
     
-    if (ui_showToolbar && nes) UI_DebugToolbar(nes); // Draw as a separate window
+    UI_DrawStatusBar(nes); // Status bar is also a dockable window now
 
     // --- Modals and non-docked utility windows ---
     if (ui_showSettingsWindow) UI_SettingsWindow(nes);
     if (ui_showAboutWindow) UI_DrawAboutWindow();
-
-    // --- Status Bar ---
-    // REFACTOR-NOTE: Status bar is drawn last to overlay on bottom of viewport.
-    // If viewports are enabled, it will correctly be in the main viewport.
-    // If not, it might draw over other ImGui windows if they are at the very bottom.
-    // A robust status bar is tricky without making it a dockable window itself or using ImGui internal APIs.
-    UI_DrawStatusBar(nes);
 }
 
-// Main UI loop update function
-bool ui_quit_requested = false; // Global flag to signal quit
+
+bool ui_quit_requested = false; 
 
 void UI_Update(NES* nes) {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
-        ImGui_ImplSDL3_ProcessEvent(&e); // Forward to ImGui
+        ImGui_ImplSDL3_ProcessEvent(&e); 
 
         if (e.type == SDL_EVENT_QUIT) {
             ui_quit_requested = true;
@@ -1245,16 +1383,14 @@ void UI_Update(NES* nes) {
              ui_quit_requested = true;
         }
 
-        // Handle global hotkeys not processed by ImGui
         if (e.type == SDL_EVENT_KEY_DOWN && !ioptr->WantCaptureKeyboard) {
             bool ctrl_pressed = (SDL_GetModState() & SDL_KMOD_CTRL);
-            // bool alt_pressed = (SDL_GetModState() & KMOD_ALT);
+            // bool alt_pressed = (SDL_GetModState() & KMOD_ALT); // For Alt+F4, handled by SDL_EVENT_QUIT usually
 
             if (e.key.key == SDLK_F5 && nes) UI_Reset(nes);
             if (e.key.key == SDLK_F6 && nes) UI_TogglePause(nes);
-            if (e.key.key == SDLK_F7 && nes && nes->cpu && ui_paused) NES_Step(nes); // Step CPU
-            if (e.key.key == SDLK_F8 && nes && ui_paused) UI_StepFrame(nes);     // Step Frame
-            // F9 is often ImGui debug metrics, avoid for now unless rebound
+            if (e.key.key == SDLK_F7 && nes && nes->cpu && ui_paused) NES_Step(nes);
+            if (e.key.key == SDLK_F8 && nes && ui_paused) UI_StepFrame(nes);    
             if (e.key.key == SDLK_F10) ui_showSettingsWindow = !ui_showSettingsWindow;
             if (e.key.key == SDLK_F11) UI_ToggleFullscreen();
 
@@ -1269,54 +1405,89 @@ void UI_Update(NES* nes) {
                 ui_openLoadStateModal = true;
             }
         }
-        // NES input is handled here if not captured by ImGui (e.g. typing in an input field)
         if ((e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_KEY_UP) && !ioptr->WantCaptureKeyboard) {
             UI_HandleInputEvent(&e);
         }
     }
 
-    if (ui_quit_requested) { // Check flag to exit main application loop
-        // Perform any cleanup if necessary before signaling exit
-        exit(0);
-        return; // Signal to main to break loop
+    if (ui_quit_requested) { 
+        UI_Shutdown(); // Shutdown is called by main application loop before exit
+        exit(0); // Let main loop handle exit
+        return; 
     }
 
-
-    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplSDLGPU3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     igNewFrame();
 
-    if (nes) { // Update NES controller states from UI input if NES context exists
+    if (nes) { 
         NES_SetController(nes, 0, nes_input_state[0]);
         NES_SetController(nes, 1, nes_input_state[1]);
 
         if(!ui_paused) {
-            NES_StepFrame(nes); // Step a full frame if not paused
+            NES_StepFrame(nes); 
         }
     }
 
-    // igShowDemoWindow(NULL); // Useful for debugging ImGui features
+    // igShowDemoWindow(NULL); // Uncomment for ImGui debugging
 
-    UI_Draw(nes); // Central drawing function
+    UI_Draw(nes); 
 
-    igRender(); // Render ImGui draw data
+    // Rendering with SDL_gpu
+    igRender();
+    ImDrawData* draw_data = igGetDrawData();
+    const bool is_minimized = (draw_data->DisplaySize.x <= 0.0f || draw_data->DisplaySize.y <= 0.0f);
 
-    // Clear OpenGL viewport (can be outside ImGui rendering if needed, e.g. for 3D scene)
-    // glViewport(0, 0, (int)ioptr->DisplaySize.x, (int)ioptr->DisplaySize.y); // Handled by ImGui_ImplOpenGL3_RenderDrawData
-    // glClearColor(clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w);
-    // glClear(GL_COLOR_BUFFER_BIT); // Only clear if you're not rendering a game screen that fills everything
+    SDL_GPUCommandBuffer* command_buffer = SDL_AcquireGPUCommandBuffer(gpu_device); 
 
-    ImGui_ImplOpenGL3_RenderDrawData(igGetDrawData());
+    SDL_GPUTexture* swapchain_texture = NULL; // Must be initialized to NULL
+    SDL_AcquireGPUSwapchainTexture(command_buffer, window, &swapchain_texture, NULL, NULL); 
 
-    if (ioptr->ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-        SDL_Window* backup_current_window = SDL_GL_GetCurrentWindow();
-        SDL_GLContext backup_current_context = SDL_GL_GetCurrentContext();
-        igUpdatePlatformWindows();
-        igRenderPlatformWindowsDefault(NULL,NULL);
-        SDL_GL_MakeCurrent(backup_current_window, backup_current_context);
+    if (swapchain_texture != NULL && !is_minimized) 
+    {
+        Imgui_ImplSDLGPU3_PrepareDrawData(draw_data, command_buffer);
+        SDL_GPUColorTargetInfo target_info = {0}; // Important to zero-initialize
+        target_info.texture = swapchain_texture;
+        target_info.clear_color.r = clear_color.x; // Uses global clear_color set by theme
+        target_info.clear_color.r = clear_color.x; // Uses global clear_color set by theme
+        target_info.clear_color.g = clear_color.y;
+        target_info.clear_color.b = clear_color.z;
+        target_info.clear_color.a = clear_color.w;
+        target_info.load_op = SDL_GPU_LOADOP_CLEAR;
+        target_info.store_op = SDL_GPU_STOREOP_STORE;
+
+        target_info.mip_level = 0;
+        target_info.layer_or_depth_plane = 0;
+        target_info.cycle = false;
+        target_info.resolve_texture = NULL;
+        target_info.resolve_mip_level = 0;
+        target_info.resolve_layer = 0;
+        target_info.cycle_resolve_texture = false;
+        target_info.padding1 = 0;
+        target_info.padding2 = 0;
+        // mip_level, layer_or_depth_plane, cycle, resolve_texture etc. are 0/false/NULL by default from zero-init
+
+        SDL_GPURenderPass* render_pass = SDL_BeginGPURenderPass(command_buffer, &target_info, 1, NULL);
+        if (render_pass) { // Check if render pass began successfully
+            ImGui_ImplSDLGPU3_RenderDrawData(draw_data, command_buffer, render_pass, NULL);
+            SDL_EndGPURenderPass(render_pass);
+        } else {
+            UI_Log("Failed to begin GPU render pass: %s", SDL_GetError());
+        }
+    } else if (is_minimized) {
+        // Window is minimized, nothing to render to swapchain.
+        // SDL_gpu handles this internally, but good to be aware.
+    } else if (swapchain_texture == NULL) {
+         UI_Log("Failed to acquire swapchain texture: %s", SDL_GetError());
     }
 
-    SDL_GL_SwapWindow(window);
+    SDL_SubmitGPUCommandBuffer(command_buffer); // This also presents the frame
+
+    // Update and Render additional Platform Windows (for multi-viewport support)
+    if (ioptr->ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+        igUpdatePlatformWindows();
+        igRenderPlatformWindowsDefault(NULL,NULL); // This should work with SDL_gpu backend
+    }
 }
 
 
@@ -1326,21 +1497,65 @@ uint8_t UI_PollInput(int controller) {
 }
 
 void UI_Shutdown() {
-    // REFACTOR-NOTE: Save recent ROMs list to a config file here if desired
-    // REFACTOR-NOTE: Save window positions/docking layout if ImGuiIniSavingRate > 0 (usually handled by ImGui itself via imgui.ini)
+    // REFACTOR-NOTE: Save recent ROMs list, window positions/docking layout (imgui.ini handles docking if enabled).
+    // Consider saving settings (theme, volume) to a config file.
 
-    glDeleteTextures(1, &ppu_game_texture); // Clean up game screen texture
-    // REFACTOR-NOTE: Clean up PPU Viewer textures (pt_texture0, pt_texture1) if they were created.
-    // Currently, they are function-static, so this needs a more robust cleanup.
-    // One way is to make them global like ppu_game_texture or pass pointers to be managed.
+    DEBUG_INFO("Shutting down UI...");
 
+    // Wait for GPU to finish any pending operations
+    if (gpu_device) {
+        SDL_WaitForGPUIdle(gpu_device);
+    }
 
-    ImGui_ImplOpenGL3_Shutdown();
+    // Shutdown ImGui backends
+    //ImGui_ImplSDLGPU3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
-    igDestroyContext(NULL); // Destroy default context
+    igDestroyContext(NULL); // Pass the context if you stored it, NULL for default
 
-    SDL_GL_DestroyContext(glContext);
-    SDL_DestroyWindow(window);
+    // Release Game Screen GPU resources
+    if (gpu_device) { 
+        if (ppu_game_transfer_buffer) {
+            SDL_ReleaseGPUTransferBuffer(gpu_device, ppu_game_transfer_buffer);
+            ppu_game_transfer_buffer = NULL;
+        }
+        if (ppu_game_sampler) {
+            SDL_ReleaseGPUSampler(gpu_device, ppu_game_sampler);
+            ppu_game_sampler = NULL;
+        }
+        if (ppu_game_texture) {
+            SDL_ReleaseGPUTexture(gpu_device, ppu_game_texture);
+            ppu_game_texture = NULL;
+        }
+
+        // Release PPU Viewer GPU resources
+        if (pt_transfer_buffer) {
+            SDL_ReleaseGPUTransferBuffer(gpu_device, pt_transfer_buffer);
+            pt_transfer_buffer = NULL;
+        }
+        if (pt_sampler) {
+            SDL_ReleaseGPUSampler(gpu_device, pt_sampler);
+            pt_sampler = NULL;
+        }
+        if (pt_texture0) {
+            SDL_ReleaseGPUTexture(gpu_device, pt_texture0);
+            pt_texture0 = NULL;
+        }
+        if (pt_texture1) {
+            SDL_ReleaseGPUTexture(gpu_device, pt_texture1);
+            pt_texture1 = NULL;
+        }
+        
+        // Destroy GPU device
+        SDL_DestroyGPUDevice(gpu_device);
+        gpu_device = NULL;
+    }
+
+    // Destroy window and quit SDL
+    if (window) {
+        SDL_DestroyWindow(window);
+        window = NULL;
+    }
     SDL_Quit();
+
     DEBUG_INFO("UI Shutdown complete.");
 }

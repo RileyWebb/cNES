@@ -16,22 +16,11 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 list(APPEND CIMGUI_LIBRARIES)
+include(cimgui/backend_test/cmake/GenerateCimguiBindings.cmake)
 
-add_library(cimgui STATIC
-        cimgui/cimgui.cpp
-        cimgui/cimgui.h
-        cimgui/imgui/imgui.cpp
-        cimgui/imgui/imgui.h
-        cimgui/imgui/imgui_widgets.cpp
-        cimgui/imgui/imgui_draw.cpp
-        cimgui/imgui/imgui_tables.cpp
-        cimgui/imgui/imgui_demo.cpp
-        cimgui/imgui/backends/imgui_impl_opengl3.cpp
-        cimgui/imgui/backends/imgui_impl_sdl3.cpp)
-target_include_directories(cimgui INTERFACE cimgui)
-target_include_directories(cimgui PRIVATE cimgui/imgui)
-target_include_directories(cimgui INTERFACE cimgui/generator/output/)
-target_compile_definitions(cimgui PUBLIC -DCIMGUI_USE_OPENGL3 -DCIMGUI_USE_SDL3)
+set(inclulist ${sdl3_SOURCE_DIR}/include)
+GenerateCimguiBindings(cimgui_with_backend sdl3 sdlgpu3 inclulist)
+target_link_libraries(cimgui_with_backend PRIVATE SDL3::SDL3)
 
 set(IMGUI_LIBRARIES )
 

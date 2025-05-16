@@ -863,7 +863,7 @@ void PPU_GetPatternTableData(PPU* ppu, int table_idx, uint8_t* buffer_256x128_in
                     // Assuming buffer is 128 wide for one pattern table.
                     // If buffer_256x128_indexed is for two tables side-by-side:
                     // buffer_x += (table_idx * 128);
-                    buffer_256x128_indexed[buffer_y * 128 + buffer_x] = pixel_value;
+                    //buffer_256x128_indexed[buffer_y * 128 + buffer_x] = pixel_value;
                 }
             }
         }

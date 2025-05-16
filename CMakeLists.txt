@@ -21,7 +21,7 @@ if (WIN32)
 endif()
 
 
-target_link_libraries(cNES PRIVATE ${PLATFORM_LIBS} cimgui cimplot libglew_static) #SDL2main)# cglm stb)#vulkan glew gl glu)
+target_link_libraries(cNES PRIVATE ${PLATFORM_LIBS} cimgui_with_backend cimplot) #SDL2main)# cglm stb)#vulkan glew gl glu)
 target_link_libraries(cNES PUBLIC SDL3-shared) #SDL2)
 
 target_compile_options(cNES PRIVATE
@@ -36,6 +36,13 @@ target_compile_options(cNES PRIVATE
         -Wno-unused-variable
         -Wno-unused-but-set-variable
         >
+)
+
+target_compile_definitions(
+	cNES
+	PRIVATE
+	CIMGUI_USE_SDL3=1
+	CIMGUI_USE_SDLGPU3=1
 )
 
 add_custom_target(copy_data
