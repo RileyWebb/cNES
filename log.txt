@@ -1,0 +1,2 @@
+16:47:47.109252 INFO  Starting cNES
+16:47:47.592692 ERROR Unable to open ROM file SMB.nes

@@ -22,22 +22,26 @@ int main(int argc, char **argv)
 
     NES* nes = NES_Create();
 
-    NES_Load("Super Mario Bros..nes", nes);
+    //NES_Load("SMB.nes", nes);
+    //NES_Load("nestest.nes", nes);
+    //NES_Reset(nes);
 
     //CPU_Reset(cpu); // Reset CPU to initial state
-    nes->cpu->pc = 0xC000;
-    nes->cpu->status = 0x24; // Explicitly match P=24 state if tests rely on it
-    nes->cpu->total_cycles = 7; // Start cycles if matching logs, 0 otherwise 
+    //nes->cpu->pc = 0xC000;
+    //nes->cpu->status = 0x24; // Explicitly match P=24 state if tests rely on it
+    //nes->cpu->total_cycles = 7; // Start cycles if matching logs, 0 otherwise 
 
     for (;;)
     {
-        while (!nes->ppu->nmi_occured)
-            NES_Step(nes);
+        //while (!nes->ppu->nmi_occured)
+        //NES_StepFrame(nes);
+
 
         UI_Update(nes);
+        //_sleep(16); // Sleep for 1ms to reduce CPU usage
 
-        while (nes->ppu->nmi_occured)
-            NES_Step(nes);
+        //while (nes->ppu->nmi_occured)
+            //NES_Step(nes);
         
     }
 

@@ -25,7 +25,7 @@ NES *NES_Create()
     if (!nes->bus) {goto error;}
     memset(nes->bus, 0, sizeof(BUS)); // Initialize BUS structure to zero
 
-    CPU_Reset(nes->cpu);
+    NES_Reset(nes);
 
     return nes;
 
@@ -84,7 +84,7 @@ int NES_Load(const char* path, NES* nes)
     uint16_t prg_rom_size = prg_rom_banks * 0x4000; // Total PRG ROM size in bytes
     uint16_t chr_rom_size = chr_rom_banks * 0x2000; // Total CHR ROM size in bytes
     uint16_t trainer_size = has_trainer ? 512 : 0; // Trainer size in bytes
-    size_t total_size = prg_rom_size + chr_rom_size + trainer_size; // Total size of the ROM
+    size_t total_size = (size_t)prg_rom_size + (size_t)chr_rom_size + (size_t)trainer_size; // Total size of the ROM
 
     uint8_t *prg_data = malloc(prg_rom_size);
     if (!prg_data) 
@@ -159,6 +159,9 @@ int NES_Load(const char* path, NES* nes)
         memcpy(nes->bus->prgRom + 0x4000, prg_data, 0x4000);
     }
 
+    // --- DO NOT copy PRG ROM into CPU memory map ($8000-$FFFF) ---
+    // The bus will always use prgRom for $8000-$FFFF
+
     // Load the CHR ROM into the BUS's CHR ROM area
     if (chr_rom_size > 0) {
         memcpy(nes->bus->chrRom, chr_data, chr_rom_size);
@@ -182,6 +185,8 @@ int NES_Load(const char* path, NES* nes)
     free(chr_data);
     if (trainer_data) free(trainer_data);
 
+    NES_Reset(nes); // Reset the NES after loading the ROM
+
     return 0;
 }
 
@@ -194,14 +199,51 @@ void NES_Step(NES *nes)
     }
 
     // Handle NMI if triggered by PPU
-    if (nes->ppu->nmi_interrupt) {
+    if (nes->ppu->nmi_interrupt_line) {
         CPU_NMI(nes->cpu);
-        nes->ppu->nmi_interrupt = 0; // Clear the NMI interrupt after CPU services it
+        nes->ppu->nmi_interrupt_line = 0; // Clear the NMI interrupt after CPU services it
     }
 
-    // Step the CPU, halt execution if CPU_Step returns -1
+    // Step the CPU
     if (CPU_Step(nes->cpu) == -1) {
         DEBUG_ERROR("CPU execution halted due to error");
-        exit(EXIT_FAILURE);
     }
+}
+
+// Add NES_StepFrame function to run the NES for one frame
+void NES_StepFrame(NES *nes)
+{
+    // Run until we enter the next frame
+    int current_frame = nes->ppu->frame_odd;
+    while (current_frame == nes->ppu->frame_odd) {
+        NES_Step(nes);
+    }
+}
+
+void NES_Reset(NES *nes) 
+{
+    CPU_Reset(nes->cpu);
+    PPU_Reset(nes->ppu);
+
+    // Reset the BUS memory
+    memset(nes->bus->memory, 0, sizeof(nes->bus->memory));
+
+    // Reset controller states
+    nes->controllers[0] = 0;
+    nes->controllers[1] = 0;
+
+}
+
+// Poll controller state (returns the current state of the specified controller)
+uint8_t NES_PollController(NES* nes, int controller)
+{
+    return nes->controllers[controller];
+}
+
+// Set controller state (UI or platform layer calls this to update controller state)
+void NES_SetController(NES* nes, int controller, uint8_t state)
+{
+    if (!nes) return;
+    if (controller < 0 || controller > 1) return;
+    nes->controllers[controller] = state;
 }

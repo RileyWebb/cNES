@@ -7,7 +7,7 @@
 typedef struct NES NES;
 
 typedef struct BUS {
-    uint8_t memory[0x10000]; // 64KB BUSory map
+    uint8_t memory[0x10000]; // 64KB address map
     uint8_t prgRom[0x8000];  // 32KB PRG ROM
     uint8_t chrRom[0x2000];  // 8KB CHR ROM
     uint8_t vram[0x1000];    // 4KB VRAM for nametables (mirrored)

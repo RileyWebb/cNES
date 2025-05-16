@@ -1,8 +1,7 @@
-#include "debug.h"
-
 #include <stdlib.h>
 #include <string.h>
 
+#include "debug.h"
 #include "cNES/nes.h"
 #include "cNES/bus.h"
 #include "cNES/ppu.h"
@@ -46,8 +45,9 @@ CPU_Opcode cpu_opcodes[256] = {
 
 CPU *CPU_Create(NES *nes) 
 {
+    // Initialize CPU
     CPU *cpu = malloc(sizeof(CPU));
-    memset(cpu, 0, sizeof(CPU)); // Initialize CPU structure to zero
+    memset(cpu, 0, sizeof(CPU)); 
     cpu->nes = nes;
     return cpu;
 }
@@ -61,47 +61,44 @@ void CPU_Reset(CPU *cpu)
     cpu->status = CPU_FLAG_UNUSED | CPU_FLAG_INTERRUPT; // Start with I flag set, Unused set
     cpu->pc = BUS_Read16(cpu->nes, 0xFFFC); // Read reset vector
     cpu->total_cycles = 0;
-    // Add 7 cycles for reset sequence? Depends on when timing starts.
 }
 
 void CPU_Push(CPU *cpu, uint8_t value) 
 {
     cpu->nes->bus->memory[0x0100 + cpu->sp] = value; // Push to stack
-    cpu->sp--; // Decrement stack pointer
+    cpu->sp = (cpu->sp - 1) & 0xFF; // Decrement stack pointer and wrap at 0xFF
 }
 
 uint8_t CPU_Pop(CPU *cpu) 
 {
-    cpu->sp++; // Increment stack pointer
+    cpu->sp = (cpu->sp + 1) & 0xFF; // Increment stack pointer and wrap at 0xFF
     return cpu->nes->bus->memory[0x0100 + cpu->sp]; // Pop from stack
 }
 
-// Correct 6502 stack push/pop order: low byte first, then high byte
 void CPU_Push16(CPU *cpu, uint16_t value) 
 {
-    CPU_Push(cpu, (uint8_t)(value & 0xFF)); // Low byte first
-    CPU_Push(cpu, (uint8_t)(value >> 8));   // High byte
+    CPU_Push(cpu, (uint8_t)(value >> 8));   // High byte first
+    CPU_Push(cpu, (uint8_t)(value & 0xFF)); // Low byte second
 }
 
 uint16_t CPU_Pop16(CPU *cpu) 
 {
-    uint8_t hi = CPU_Pop(cpu); // High byte second
-    uint8_t lo = CPU_Pop(cpu); // Low byte first
+    uint8_t lo = CPU_Pop(cpu); // low byte second
+    uint8_t hi = CPU_Pop(cpu); // High byte first
     return (uint16_t)lo | ((uint16_t)hi << 8);
 }
 
 void CPU_SetFlag(CPU *cpu, uint8_t flag, int value) 
 {
-    if (value) {
+    if (value)
         cpu->status |= flag; // Set the flag
-    } else {
+    else
         cpu->status &= ~flag; // Clear the flag
-    }
 }
 
 uint8_t CPU_GetFlag(CPU *cpu, uint8_t flag) 
 {
-    return (cpu->status & flag) > 0; // Return the status of the flag
+    return (cpu->status & flag); // Return the status of the flag
 }
 
 void CPU_UpdateZeroNegativeFlags(CPU *cpu, uint8_t value) 
@@ -164,9 +161,11 @@ uint16_t CPU_AbsoluteX(CPU *cpu)
     uint16_t base_addr = BUS_Read16(cpu->nes, cpu->pc); // Read base address
     cpu->pc += 2; // Increment program counter by 2
     uint16_t final_addr = base_addr + cpu->x; // Add X register
-    if ((base_addr & 0xFF00) != (final_addr & 0xFF00)) { // Check for page boundary crossing
+
+    // Check for page boundary crossing
+    if ((base_addr & 0xFF00) != (final_addr & 0xFF00)) 
         cpu->total_cycles++; // Add cycle penalty
-    }
+    
     return final_addr; // Return effective address
 }
 
@@ -204,9 +203,8 @@ uint16_t CPU_IndirectIndexed(CPU *cpu)
     uint16_t final_addr = base_addr + cpu->y; // Add Y register to base address
 
     // Check for page boundary crossing
-    if ((base_addr & 0xFF00) != (final_addr & 0xFF00)) {
+    if ((base_addr & 0xFF00) != (final_addr & 0xFF00))
         cpu->total_cycles++; // Add cycle penalty for page crossing
-    }
 
     return final_addr; // Return the effective address
 }
@@ -655,7 +653,7 @@ void CPU_NMI(CPU *cpu)
 
 void CPU_BRK(CPU *cpu) 
 {
-    CPU_Push16(cpu, cpu->pc); // Push program counter to stack
+    CPU_Push16(cpu, cpu->pc); // Push program counter (already incremented past opcode and operand)
     CPU_Push(cpu, cpu->status | CPU_FLAG_BREAK); // Push status to stack with BREAK flag set (fixed)
     CPU_SetFlag(cpu, CPU_FLAG_INTERRUPT, 1); // Set interrupt flag
     cpu->pc = BUS_Read16(cpu->nes, 0xFFFE); // Read interrupt vector

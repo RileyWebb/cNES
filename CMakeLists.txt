@@ -22,7 +22,7 @@ endif()
 
 
 target_link_libraries(cNES PRIVATE ${PLATFORM_LIBS} cimgui cimplot libglew_static) #SDL2main)# cglm stb)#vulkan glew gl glu)
-target_link_libraries(cNES PUBLIC) #SDL2)
+target_link_libraries(cNES PUBLIC SDL3-shared) #SDL2)
 
 target_compile_options(cNES PRIVATE
         $<$<CONFIG:Debug>:
@@ -49,11 +49,10 @@ add_custom_target(copy_info
         ${CMAKE_CURRENT_SOURCE_DIR}/CREDITS
         ${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
         
-file(GLOB TEST_FILES ${CMAKE_CURRENT_SOURCE_DIR}/tests/*)
 add_custom_target(copy_tests
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/tests/
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${TEST_FILES}
-        ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/tests/)
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests
+                ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/tests
+)
 
 add_dependencies(cNES copy_info copy_tests)

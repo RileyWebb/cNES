@@ -1,4 +1,4 @@
-add_subdirectory(SDL EXCLUDE_FROM_ALL)
+add_subdirectory(sdl EXCLUDE_FROM_ALL)
 add_subdirectory(glew EXCLUDE_FROM_ALL)
 #add_subdirectory(libuv EXCLUDE_FROM_ALL)
 #add_subdirectory(zip EXCLUDE_FROM_ALL)
@@ -27,11 +27,11 @@ add_library(cimgui STATIC
         cimgui/imgui/imgui_tables.cpp
         cimgui/imgui/imgui_demo.cpp
         cimgui/imgui/backends/imgui_impl_opengl3.cpp
-        cimgui/imgui/backends/imgui_impl_sdl2.cpp)
+        cimgui/imgui/backends/imgui_impl_sdl3.cpp)
 target_include_directories(cimgui INTERFACE cimgui)
 target_include_directories(cimgui PRIVATE cimgui/imgui)
 target_include_directories(cimgui INTERFACE cimgui/generator/output/)
-target_compile_definitions(cimgui PUBLIC -DCIMGUI_USE_OPENGL3 -DCIMGUI_USE_SDL2)
+target_compile_definitions(cimgui PUBLIC -DCIMGUI_USE_OPENGL3 -DCIMGUI_USE_SDL3)
 
 set(IMGUI_LIBRARIES )
 
@@ -42,7 +42,7 @@ else (WIN32)
     target_compile_definitions(cimgui PUBLIC IMGUI_IMPL_API=extern\t\"C\"\t)
 endif (WIN32)
 
-target_link_libraries(cimgui PUBLIC SDL2 ${CIMGUI_LIBRARIES} stdc++ m)
+target_link_libraries(cimgui PUBLIC SDL3-shared ${CIMGUI_LIBRARIES} stdc++ m)
 
 #CIMPLOT
 project(cimplot LANGUAGES CXX)
