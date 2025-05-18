@@ -14,6 +14,8 @@ typedef struct NES {
     BUS* bus; // Pointer to the BUS
 
     uint8_t controllers[2]; // Two NES controllers
+    uint8_t controller_strobe; // Strobe flag for controllers
+    uint8_t controller_shift[2]; // Shift registers for controllers
 } NES;
 
 NES *NES_Create();

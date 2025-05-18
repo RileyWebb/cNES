@@ -63,32 +63,32 @@ void CPU_Reset(CPU *cpu)
     cpu->total_cycles = 0;
 }
 
-void CPU_Push(CPU *cpu, uint8_t value) 
+static inline void CPU_Push(CPU *cpu, uint8_t value) 
 {
     cpu->nes->bus->memory[0x0100 + cpu->sp] = value; // Push to stack
     cpu->sp = (cpu->sp - 1) & 0xFF; // Decrement stack pointer and wrap at 0xFF
 }
 
-uint8_t CPU_Pop(CPU *cpu) 
+static inline uint8_t CPU_Pop(CPU *cpu) 
 {
     cpu->sp = (cpu->sp + 1) & 0xFF; // Increment stack pointer and wrap at 0xFF
     return cpu->nes->bus->memory[0x0100 + cpu->sp]; // Pop from stack
 }
 
-void CPU_Push16(CPU *cpu, uint16_t value) 
+static inline void CPU_Push16(CPU *cpu, uint16_t value) 
 {
     CPU_Push(cpu, (uint8_t)(value >> 8));   // High byte first
     CPU_Push(cpu, (uint8_t)(value & 0xFF)); // Low byte second
 }
 
-uint16_t CPU_Pop16(CPU *cpu) 
+static inline uint16_t CPU_Pop16(CPU *cpu) 
 {
     uint8_t lo = CPU_Pop(cpu); // low byte second
     uint8_t hi = CPU_Pop(cpu); // High byte first
     return (uint16_t)lo | ((uint16_t)hi << 8);
 }
 
-void CPU_SetFlag(CPU *cpu, uint8_t flag, int value) 
+inline void CPU_SetFlag(CPU *cpu, uint8_t flag, int value) 
 {
     if (value)
         cpu->status |= flag; // Set the flag
@@ -96,67 +96,67 @@ void CPU_SetFlag(CPU *cpu, uint8_t flag, int value)
         cpu->status &= ~flag; // Clear the flag
 }
 
-uint8_t CPU_GetFlag(CPU *cpu, uint8_t flag) 
+inline uint8_t CPU_GetFlag(CPU *cpu, uint8_t flag) 
 {
     return (cpu->status & flag); // Return the status of the flag
 }
 
-void CPU_UpdateZeroNegativeFlags(CPU *cpu, uint8_t value) 
+static inline void CPU_UpdateZeroNegativeFlags(CPU *cpu, uint8_t value) 
 {
     CPU_SetFlag(cpu, CPU_FLAG_ZERO, value == 0); // Set zero flag if value is zero
     CPU_SetFlag(cpu, CPU_FLAG_NEGATIVE, (value & 0x80) != 0); // Set negative flag if bit 7 is set
 }
 
-void CPU_SetNegativeFlag(CPU *cpu, uint8_t value) 
+static inline void CPU_SetNegativeFlag(CPU *cpu, uint8_t value) 
 {
     CPU_SetFlag(cpu, CPU_FLAG_NEGATIVE, (value & 0x80) != 0); // Set negative flag if bit 7 is set
 }
 
 // Addressing modes
-uint16_t CPU_Immediate(CPU *cpu) 
+static inline uint16_t CPU_Immediate(CPU *cpu) 
 {
     return cpu->pc++; // Immediate mode, just return the current PC and increment
 }
 
-uint16_t CPU_Accumulator(CPU *cpu) 
+static inline uint16_t CPU_Accumulator(CPU *cpu) 
 {
     return 0; // Accumulator mode, no address needed
 }
 
-uint16_t CPU_Implied(CPU *cpu) 
+static inline uint16_t CPU_Implied(CPU *cpu) 
 {
     return 0; // Implied mode, no address needed
 }
 
-uint16_t CPU_ZeroPage(CPU *cpu) 
+static inline uint16_t CPU_ZeroPage(CPU *cpu) 
 {
     return BUS_Read(cpu->nes, cpu->pc++); // Zero page mode, read the address from memory
 }
 
-uint16_t CPU_ZeroPageX(CPU *cpu) 
+static inline uint16_t CPU_ZeroPageX(CPU *cpu) 
 {
     return (BUS_Read(cpu->nes, cpu->pc++) + cpu->x) & 0xFF; // Zero page X mode
 }
 
-uint16_t CPU_ZeroPageY(CPU *cpu) 
+static inline uint16_t CPU_ZeroPageY(CPU *cpu) 
 {
     return (BUS_Read(cpu->nes, cpu->pc++) + cpu->y) & 0xFF; // Zero page Y mode
 }
 
-uint16_t CPU_Relative(CPU *cpu) 
+static inline uint16_t CPU_Relative(CPU *cpu) 
 {
     int8_t offset = (int8_t)BUS_Read(cpu->nes, cpu->pc++); // Read signed offset
     return (uint16_t)(cpu->pc + offset); // Calculate effective address with explicit cast
 }
 
-uint16_t CPU_Absolute(CPU *cpu) 
+static inline uint16_t CPU_Absolute(CPU *cpu) 
 {
     uint16_t address = BUS_Read16(cpu->nes, cpu->pc); // Absolute mode, read the address from memory
     cpu->pc += 2; // Increment program counter by 2
     return address;
 }
 
-uint16_t CPU_AbsoluteX(CPU *cpu) 
+static inline uint16_t CPU_AbsoluteX(CPU *cpu) 
 {
     uint16_t base_addr = BUS_Read16(cpu->nes, cpu->pc); // Read base address
     cpu->pc += 2; // Increment program counter by 2
@@ -169,7 +169,7 @@ uint16_t CPU_AbsoluteX(CPU *cpu)
     return final_addr; // Return effective address
 }
 
-uint16_t CPU_AbsoluteY(CPU *cpu) 
+static inline uint16_t CPU_AbsoluteY(CPU *cpu) 
 {
     uint16_t base_addr = BUS_Read16(cpu->nes, cpu->pc); // Read base address
     cpu->pc += 2; // Increment program counter by 2
@@ -180,7 +180,7 @@ uint16_t CPU_AbsoluteY(CPU *cpu)
     return final_addr; // Return effective address
 }
 
-uint16_t CPU_Indirect(CPU *cpu) 
+static inline uint16_t CPU_Indirect(CPU *cpu) 
 {
     uint16_t addr = BUS_Read16(cpu->nes, cpu->pc); // Read address from memory
     uint16_t lo = BUS_Read(cpu->nes, addr); // Read low byte
@@ -188,7 +188,7 @@ uint16_t CPU_Indirect(CPU *cpu)
     return (hi << 8) | lo; // Combine into 16-bit address
 }
 
-uint16_t CPU_IndexedIndirect(CPU *cpu) 
+static inline uint16_t CPU_IndexedIndirect(CPU *cpu) 
 {
     uint8_t zp_addr = (BUS_Read(cpu->nes, cpu->pc++) + cpu->x) & 0xFF; // Add X and wrap around zero page
     uint8_t lo = BUS_Read(cpu->nes, zp_addr); // Read low byte
@@ -196,7 +196,7 @@ uint16_t CPU_IndexedIndirect(CPU *cpu)
     return (uint16_t)lo | ((uint16_t)hi << 8); // Combine into 16-bit address
 }
 
-uint16_t CPU_IndirectIndexed(CPU *cpu) 
+static inline uint16_t CPU_IndirectIndexed(CPU *cpu) 
 {
     uint8_t zp_addr = BUS_Read(cpu->nes, cpu->pc++); // Read zero page address
     uint16_t base_addr = (uint16_t)BUS_Read(cpu->nes, zp_addr) | ((uint16_t)BUS_Read(cpu->nes, (zp_addr + 1) & 0xFF) << 8); // Handle zero-page wraparound
@@ -867,7 +867,6 @@ void CPU_TAS(CPU *cpu)
 {
     // TAS: SP = A & X
     cpu->sp = cpu->a & cpu->x;
-    // No flags affected
 }
 
 int CPU_Step(CPU *cpu) 

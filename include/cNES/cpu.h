@@ -60,31 +60,4 @@ int CPU_Step(CPU* cpu);
 void CPU_Interupt(CPU* cpu);
 void CPU_NMI(CPU* cpu);
 
-// Stack operations
-void CPU_Push(CPU* cpu, uint8_t value);
-void CPU_Push16(CPU* cpu, uint16_t value);
-uint8_t CPU_Pop(CPU* cpu);
-uint16_t CPU_Pop16(CPU* cpu);
-
-// Status flag helper functions
-void CPU_SetFlag(CPU* cpu, uint8_t flag, int value);
-uint8_t CPU_GetFlag(CPU* cpu, uint8_t flag);
-void CPU_UpdateZeroNegativeFlags(CPU* cpu, uint8_t value);
-void CPU_SetNegativeFlag(CPU* cpu, uint8_t value);
-
-// Addressing modes
-uint16_t CPU_Immediate(CPU* cpu);
-uint16_t CPU_Accumulator(CPU* cpu);
-uint16_t CPU_Implied(CPU* cpu);
-uint16_t CPU_ZeroPage(CPU* cpu);
-uint16_t CPU_ZeroPageX(CPU* cpu);
-uint16_t CPU_ZeroPageY(CPU* cpu);
-uint16_t CPU_Relative(CPU* cpu);
-uint16_t CPU_Absolute(CPU* cpu);
-uint16_t CPU_AbsoluteX(CPU* cpu);
-uint16_t CPU_AbsoluteY(CPU* cpu);
-uint16_t CPU_Indirect(CPU* cpu);
-uint16_t CPU_IndexedIndirect(CPU* cpu);
-uint16_t CPU_IndirectIndexed(CPU* cpu);
-
 #endif // CPU_H

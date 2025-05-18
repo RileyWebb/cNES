@@ -11,9 +11,8 @@ include_directories(include)
 add_subdirectory(ext)
 
 #cNES
-file(GLOB CNES_SOURCES src/cNES/*.c)
-file(GLOB SOURCES src/*.c)
-add_executable(cNES ${CNES_SOURCES} ${SOURCES})
+file(GLOB SOURCES src/*.c src/cNES/*.c src/ui/*.c)
+add_executable(cNES ${SOURCES})
 
 if (WIN32)
     set(PLATFORM_LIBS mingw32)

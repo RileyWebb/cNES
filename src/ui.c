@@ -13,6 +13,8 @@
 #include <time.h>   // For logging timestamp
 
 #include "debug.h"
+#include "ui/cimgui_markdown.h"
+
 #include "cNES/nes.h"
 #include "cNES/cpu.h"
 #include "cNES/ppu.h"
@@ -30,7 +32,7 @@ ImVec4 clear_color; // Clear color for the swapchain
 // --- UI State ---
 static bool ui_showPpuViewer = true;
 static bool ui_showLog = true;
-static bool ui_paused = true;
+static bool ui_paused = false;
 static bool ui_showMemoryViewer = true;
 static bool ui_showSettingsWindow = false;
 static char ui_romPath[256] = "";
@@ -46,6 +48,8 @@ static char ui_recentRoms[UI_MAX_RECENT_ROMS][256];
 static int ui_recentRomsCount = 0;
 
 static bool ui_showAboutWindow = false;
+static bool ui_showCreditsWindow = false;
+static bool ui_showLicenceWindow = false;
 static int ui_ppuViewerSelectedPalette = 0;
 static bool ui_openSaveStateModal = false;
 static bool ui_openLoadStateModal = false;
@@ -70,6 +74,7 @@ static SDL_GPUTransferBuffer* pt_transfer_buffer = NULL; // Single transfer buff
 static SDL_GPUTexture* ppu_game_texture = NULL;
 static SDL_GPUSampler* ppu_game_sampler = NULL;
 static SDL_GPUTransferBuffer* ppu_game_transfer_buffer = NULL; // Renamed to avoid conflict
+static SDL_GPUTextureSamplerBinding ppu_game_texture_sampler_binding = {0};
 
 // --- Helper: Append to log ---
 void UI_Log(const char* fmt, ...) {
@@ -860,17 +865,14 @@ void UI_Init() {
         exit(1);
     }
 
-    // Create GPU Device
-    // REFACTOR-NOTE: SDL_GPU_BACKEND_ALL allows SDL to pick the best available.
-    // True for debug_mode can be helpful during development.
-
-    gpu_device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_METALLIB,
+    gpu_device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV| SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_METALLIB,
 #ifdef DEBUG
         true,
 #else
         false,
 #endif
         NULL);
+
     if (!gpu_device) {
         DEBUG_FATAL("Unable to create GPU Device: %s", SDL_GetError());
         SDL_DestroyWindow(window);
@@ -895,7 +897,9 @@ void UI_Init() {
     ioptr->ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     ioptr->ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad; 
     ioptr->ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    ioptr->ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; 
+    //ioptr->ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; 
+
+    ImPlot_SetCurrentContext(ImPlot_CreateContext()); // Initialize ImPlot context
 
     ImGuiStyle* style = igGetStyle();
     if (ioptr->ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
@@ -985,6 +989,109 @@ void UI_DrawAboutWindow() {
     igEnd();
 }
 
+static ImGuiMarkdown_Config mdConfig;
+
+static char* credits_markdown;
+static char* licence_markdown;
+
+static void UI_MD_LinkCallback(ImGuiMarkdown_LinkCallbackData link) 
+{
+    if (link.link && link.linkLength > 0) {
+        char truncated_link[link.linkLength + 1];
+        strncpy(truncated_link, link.link, link.linkLength);
+        truncated_link[link.linkLength] = '\0';
+        SDL_OpenURL(truncated_link);
+    }
+}
+
+void UI_DrawCreditsWindow() {
+    if (!ui_showCreditsWindow) return;
+    igSetNextWindowSize((ImVec2){400, 250}, ImGuiCond_FirstUseEver);
+    if (igBegin("Credits", &ui_showCreditsWindow, ImGuiWindowFlags_None)) {
+        ImGuiMarkdown_Config_Init(&mdConfig); // Initialize with defaults
+
+        // Customize config
+        mdConfig.linkCallback = UI_MD_LinkCallback;
+        // mdConfig.linkIcon = ICON_FA_LINK; // If using FontAwesome
+
+        //if (myH1Font) mdConfig.headingFormats[0].font = myH1Font;
+        //mdConfig.headingFormats[0].separator = true;
+
+        //if (myH2Font) mdConfig.headingFormats[1].font = myH2Font;
+        //mdConfig.headingFormats[1].separator = true;
+        
+        // H3 uses default font but no separator
+        //mdConfig.headingFormats[2].font = NULL; // Or igGetDefaultFont()
+        //mdConfig.headingFormats[2].separator = false;
+
+        // mdConfig.formatCallback = MyCustomFormatCallback; // If you have one
+
+        if (credits_markdown) {
+            ImGuiMarkdown(credits_markdown, strlen(credits_markdown), &mdConfig);
+        } else {
+            FILE* file = fopen("CREDITS", "r");
+            if (file) {
+                fseek(file, 0, SEEK_END);
+                long length = ftell(file);
+                fseek(file, 0, SEEK_SET);
+                credits_markdown = (char*)malloc(length + 1);
+                if (credits_markdown) {
+                    fread(credits_markdown, 1, length, file);
+                    credits_markdown[length] = '\0'; // Null-terminate
+                }
+                fclose(file);
+            } else {
+                igText("Error loading credits.");
+            }
+        }
+    }
+    igEnd();
+}
+
+void UI_DrawLicenceWindow() {
+    if (!ui_showLicenceWindow) return;
+    igSetNextWindowSize((ImVec2){400, 250}, ImGuiCond_FirstUseEver);
+    if (igBegin("Licence", &ui_showLicenceWindow, ImGuiWindowFlags_None)) {
+        ImGuiMarkdown_Config_Init(&mdConfig); // Initialize with defaults
+
+        // Customize config
+        mdConfig.linkCallback = UI_MD_LinkCallback;
+        // mdConfig.linkIcon = ICON_FA_LINK; // If using FontAwesome
+
+        //if (myH1Font) mdConfig.headingFormats[0].font = myH1Font;
+        //mdConfig.headingFormats[0].separator = true;
+
+        //if (myH2Font) mdConfig.headingFormats[1].font = myH2Font;
+        //mdConfig.headingFormats[1].separator = true;
+        
+        // H3 uses default font but no separator
+        //mdConfig.headingFormats[2].font = NULL; // Or igGetDefaultFont()
+        //mdConfig.headingFormats[2].separator = false;
+
+        // mdConfig.formatCallback = MyCustomFormatCallback; // If you have one
+
+        if (licence_markdown) {
+            ImGuiMarkdown(licence_markdown, strlen(licence_markdown), &mdConfig);
+        } else {
+            FILE* file = fopen("LICENCE", "r");
+            if (file) {
+                fseek(file, 0, SEEK_END);
+                long length = ftell(file);
+                fseek(file, 0, SEEK_SET);
+                licence_markdown = (char*)malloc(length + 1);
+                if (licence_markdown) {
+                    fread(licence_markdown, 1, length, file);
+                    licence_markdown[length] = '\0'; // Null-terminate
+                }
+                fclose(file);
+            } else {
+                igText("Error loading licence.");
+            }
+        }
+    }
+    igEnd();
+}
+
 static void UI_ShowAllDebugWindows() {
     ui_showCpuWindow = true;
     ui_showPpuViewer = true;
@@ -992,6 +1099,7 @@ static void UI_ShowAllDebugWindows() {
     ui_showLog = true;
     ui_showDisassembler = true;
 }
+
 static void UI_HideAllDebugWindows() {
     ui_showCpuWindow = false;
     ui_showPpuViewer = false;
@@ -1110,7 +1218,9 @@ void UI_DrawMainMenuBar(NES* nes) {
             igEndMenu();
         }
         if (igBeginMenu("Help", true)) {
-            if (igMenuItem_Bool("About cEMU", NULL, false, true)) ui_showAboutWindow = true;
+            if (igMenuItem_Bool("About", NULL, false, true)) ui_showAboutWindow = true;
+            if (igMenuItem_Bool("Credits", NULL, false, true)) ui_showCreditsWindow = true;
+            if (igMenuItem_Bool("Licence", NULL, false, true)) ui_showLicenceWindow = true;
             // REFACTOR-NOTE: Add "View Controls" or "Help Topics" menu item with keybinds, basic usage.
             igEndMenu();
         }
@@ -1126,15 +1236,18 @@ void UI_GameScreenWindow(NES* nes)
     igPushStyleVar_Vec2(ImGuiStyleVar_WindowPadding, (ImVec2){0,0});
     if (igBegin("Game Screen", &ui_showGameScreen, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         if (!gpu_device) {
-             igTextColored((ImVec4){1.f,1.f,0.f,1.f}, "Error: No SDL_GPUDevice available.");
+            igTextColored((ImVec4){1.f,1.f,0.f,1.f}, "Error: No SDL_GPUDevice available.");
         } else if (!nes || !nes->ppu || !nes->ppu->framebuffer) {
-             ImVec2 avail_size; igGetContentRegionAvail(&avail_size);
-             const char* msg = "No ROM loaded or PPU not ready.";
-             ImVec2 text_size; igCalcTextSize(&text_size, msg, NULL, false, 0.0f);
-             igSetCursorPosX((avail_size.x - text_size.x) * 0.5f);
-             igSetCursorPosY((avail_size.y - text_size.y) * 0.5f);
-             igTextDisabled("%s", msg);
+            ImVec2 avail_size; 
+            igGetContentRegionAvail(&avail_size);
+            const char* msg = "No ROM loaded or PPU not ready.";
+            ImVec2 text_size; 
+            igCalcTextSize(&text_size, msg, NULL, false, 0.0f);
+            igSetCursorPosX((avail_size.x - text_size.x) * 0.5f);
+            igSetCursorPosY((avail_size.y - text_size.y) * 0.5f);
+            igTextDisabled("%s", msg);
         } else {
+            // Create texture if needed
             if (ppu_game_texture == NULL) {
                 SDL_GPUTextureCreateInfo texture_info = {0};
                 texture_info.type = SDL_GPU_TEXTURETYPE_2D;
@@ -1143,15 +1256,18 @@ void UI_GameScreenWindow(NES* nes)
                 texture_info.height = 240;
                 texture_info.layer_count_or_depth = 1;
                 texture_info.num_levels = 1;
-                texture_info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;// | SDL_GPU_TEXTUREUSAGE_; // Allow copy to it
+                texture_info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE;
                 ppu_game_texture = SDL_CreateGPUTexture(gpu_device, &texture_info);
                 if (!ppu_game_texture) {
                     UI_Log("GameScreen: Failed to create PPU game texture: %s", SDL_GetError());
                     igTextColored((ImVec4){1.f,0.f,0.f,1.f}, "Failed to create PPU game texture.");
                     igEnd(); igPopStyleVar(1); return;
                 }
+
+                ppu_game_texture_sampler_binding.texture = ppu_game_texture;
             }
 
+            // Create sampler if needed
             if (ppu_game_sampler == NULL) {
                 SDL_GPUSamplerCreateInfo sampler_info = {0};
                 sampler_info.min_filter = SDL_GPU_FILTER_NEAREST;
@@ -1161,17 +1277,20 @@ void UI_GameScreenWindow(NES* nes)
                 sampler_info.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
                 sampler_info.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
                 ppu_game_sampler = SDL_CreateGPUSampler(gpu_device, &sampler_info);
-                 if (!ppu_game_sampler) {
+                if (!ppu_game_sampler) {
                     UI_Log("GameScreen: Failed to create PPU game sampler: %s", SDL_GetError());
                     igTextColored((ImVec4){1.f,0.f,0.f,1.f}, "Failed to create PPU game sampler.");
                     igEnd(); igPopStyleVar(1); return;
                 }
+
+                ppu_game_texture_sampler_binding.sampler = ppu_game_sampler;
             }
 
-            if (ppu_game_transfer_buffer == NULL) { // Used renamed variable
+            // Create transfer buffer if needed
+            if (ppu_game_transfer_buffer == NULL) {
                 SDL_GPUTransferBufferCreateInfo transfer_create_info = {0};
                 transfer_create_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-                transfer_create_info.size = 256 * 240 * 4 * 8;
+                transfer_create_info.size = 256 * 240 * 4; // Only need space for one frame
                 ppu_game_transfer_buffer = SDL_CreateGPUTransferBuffer(gpu_device, &transfer_create_info);
                 if (!ppu_game_transfer_buffer) {
                     UI_Log("GameScreen: Failed to create PPU transfer buffer: %s", SDL_GetError());
@@ -1180,27 +1299,35 @@ void UI_GameScreenWindow(NES* nes)
                 }
             }
 
+            // Update texture if we have new frame data
             if (ppu_game_texture && nes->ppu->framebuffer) {
-                // Correctly copy data to transfer buffer first
+                // Map transfer buffer
                 void* mapped_memory = SDL_MapGPUTransferBuffer(gpu_device, ppu_game_transfer_buffer, false);
                 if (!mapped_memory) {
-                     UI_Log("GameScreen: Failed to map GPU transfer buffer: %s", SDL_GetError());
+                    UI_Log("GameScreen: Failed to map GPU transfer buffer: %s", SDL_GetError());
                 } else {
-                    memcpy(mapped_memory, nes->ppu->framebuffer, 256 * 240 * 4);
+                    // Copy frame data to transfer buffer
+                    memcpy(mapped_memory, nes->ppu->framebuffer, 256 * 240 * sizeof(uint32_t));
                     SDL_UnmapGPUTransferBuffer(gpu_device, ppu_game_transfer_buffer);
-                    // Data is now in ppu_game_transfer_buffer
+
+                    // Create command buffer for the copy operation
                     SDL_GPUCommandBuffer* cmd_buffer = SDL_AcquireGPUCommandBuffer(gpu_device);
                     if (cmd_buffer) {
                         SDL_GPUCopyPass* copy_pass = SDL_BeginGPUCopyPass(cmd_buffer);
                         if (copy_pass) {
                             SDL_UploadToGPUTexture(
                                 copy_pass,
-                                &(SDL_GPUTextureTransferInfo) {
+                                &(SDL_GPUTextureTransferInfo){
                                     .transfer_buffer = ppu_game_transfer_buffer,
-                                    .offset = 0, /* Zeros out the rest */
+                                    .offset = 0,
+                                    .pixels_per_row = 256,
+                                    .rows_per_layer = 240
                                 },
                                 &(SDL_GPUTextureRegion){
                                     .texture = ppu_game_texture,
+                                    .x = 0,
+                                    .y = 0,
+                                    .z = 0,
                                     .w = 256,
                                     .h = 240,
                                     .d = 1
@@ -1211,14 +1338,14 @@ void UI_GameScreenWindow(NES* nes)
                         } else {
                             UI_Log("GameScreen: Failed to begin GPU copy pass: %s", SDL_GetError());
                         }
-                        SDL_SubmitGPUCommandBuffer(cmd_buffer); // Submit this specific command buffer
-                        //nes->ppu->frame_ready = false;
+                        SDL_SubmitGPUCommandBuffer(cmd_buffer);
                     } else {
-                         UI_Log("GameScreen: Failed to acquire GPU command buffer for texture upload: %s", SDL_GetError());
+                        UI_Log("GameScreen: Failed to acquire GPU command buffer for texture upload: %s", SDL_GetError());
                     }
                 }
             }
 
+            // Calculate display size maintaining aspect ratio
             ImVec2 window_content_region_size;
             igGetContentRegionAvail(&window_content_region_size);
             float aspect_ratio = 256.0f / 240.0f;
@@ -1230,13 +1357,14 @@ void UI_GameScreenWindow(NES* nes)
                 image_size.y = window_content_region_size.x / aspect_ratio;
             }
 
+            // Center the image
             float offset_x = (window_content_region_size.x - image_size.x) * 0.5f;
             float offset_y = (window_content_region_size.y - image_size.y) * 0.5f;
             igSetCursorPos((ImVec2){igGetCursorPosX() + offset_x, igGetCursorPosY() + offset_y});
 
-            if (ppu_game_texture && ppu_game_sampler) {
-                 SDL_GPUTextureSamplerBinding texture_sampler_binding = {ppu_game_texture, ppu_game_sampler};
-                 igImage((ImTextureID)(uintptr_t)&texture_sampler_binding, image_size, (ImVec2){0, 0}, (ImVec2){1, 1});
+            // Display the texture
+            if (ppu_game_texture_sampler_binding.texture && ppu_game_texture_sampler_binding.sampler) {
+                igImage((ImTextureID)(uintptr_t)&ppu_game_texture_sampler_binding, image_size, (ImVec2){0, 0}, (ImVec2){1, 1});
             } else {
                 igText("Game texture or sampler not ready.");
             }
@@ -1246,18 +1374,19 @@ void UI_GameScreenWindow(NES* nes)
     igPopStyleVar(1);
 }
 
-void UI_DrawStatusBar(NES* nes) {
-    // REFACTOR-NOTE: Status bar is now a dockable window. Its height can be managed by docking or constraints.
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoTitleBar;
-    // Set a minimum height for the status bar if desired, though docking might override explicit sizing.
-    // float status_bar_height = igGetFrameHeight() + igGetStyle()->WindowPadding.y * 2.0f;
-    // igSetNextWindowSizeConstraints((ImVec2){0, status_bar_height},(ImVec2){FLT_MAX, status_bar_height}, NULL, NULL);
+void UI_DrawStatusBar(NES* nes) 
+{
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize;
+
+    ImGuiViewport* viewport = igGetMainViewport();
+    igSetNextWindowSize((ImVec2){viewport->WorkSize.x, 28}, ImGuiCond_Always);
+    igSetNextWindowPos((ImVec2){viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - 28}, ImGuiCond_Always, (ImVec2){0,0});
 
     if (igBegin("Status Bar", NULL, flags))  {
         // Calculate FPS (simple moving average or per-second updates)
-        static Uint32 frame_count = 0;
-        static Uint32 last_fps_time = 0;
-        Uint32 current_ticks = SDL_GetTicks();
+        static uint32_t frame_count = 0;
+        static uint32_t last_fps_time = 0;
+        uint32_t current_ticks = SDL_GetTicks();
         frame_count++;
         if (current_ticks - last_fps_time >= 1000) {
             ui_fps = (float)frame_count / ((current_ticks - last_fps_time)/1000.0f);
@@ -1267,7 +1396,7 @@ void UI_DrawStatusBar(NES* nes) {
         
         igText("FPS: %.1f | ROM: %s | %s", ui_fps, ui_currentRomName, ui_paused ? "Paused" : "Running");
         
-        const char* version_text = "cEMU v0.2.sdl3gpu"; // REFACTOR-NOTE: Consistent versioning
+        const char* version_text = "cNES v0.2"; // REFACTOR-NOTE: Consistent versioning
         ImVec2 version_text_size;
         igCalcTextSize(&version_text_size, version_text, NULL, false, 0);
         
@@ -1284,6 +1413,8 @@ void UI_DrawStatusBar(NES* nes) {
         igTextDisabled("%s", version_text);
     }
     igEnd();
+
+    //igSetWindowSize_Str("Status Bar", (ImVec2){igGetMainViewport()->WorkSize.x, 124}, ImGuiCond_Always);
 }
 
 void UI_Draw(NES* nes) {
@@ -1318,8 +1449,8 @@ void UI_Draw(NES* nes) {
         ImGuiID dock_id_left;
 
         // Split layout: Status bar at bottom, then Log above status, then main area split left/center/right
-        dock_id_statusbar = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Down, 0.05f, NULL, &dock_main_id);
-        dock_id_log = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Down, 0.25f, NULL, &dock_main_id); // Log takes 25% of remaining
+        dock_id_statusbar = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Down, 0.0f, NULL, &dock_main_id);
+        dock_id_log = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Down, 0.15f, NULL, &dock_main_id); // Log takes 15% of remaining
         dock_id_right = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Right, 0.25f, NULL, &dock_main_id); // Right panel 25%
         dock_id_left = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Left, 0.22f, NULL, &dock_main_id);  // Left panel 22%
         // Center panel is what remains of dock_main_id
@@ -1335,8 +1466,10 @@ void UI_Draw(NES* nes) {
 
         // Make status bar non-interactive for docking/resizing
         ImGuiDockNode* status_node = igDockBuilderGetNode(dock_id_statusbar);
-        if (status_node) ImGuiDockNode_SetLocalFlags(status_node, ImGuiDockNodeFlags_NoTabBar | ImGuiDockNodeFlags_NoUndocking | ImGuiDockNodeFlags_NoResize);
-        
+        if (status_node) ImGuiDockNode_SetLocalFlags(status_node, ImGuiDockNodeFlags_NoTabBar | ImGuiDockNodeFlags_NoUndocking | ImGuiDockNodeFlags_NoResize | ImGuiDockNodeFlags_NoWindowMenuButton);
+        ImGuiDockNode* game_node = igDockBuilderGetNode(dock_main_id);
+        if (game_node) ImGuiDockNode_SetLocalFlags(game_node, ImGuiDockNodeFlags_NoTabBar | ImGuiDockNodeFlags_NoUndocking);
+
         igDockBuilderFinish(dockspace_id);
         
         // Ensure windows part of the default layout are initially set to visible
@@ -1350,10 +1483,11 @@ void UI_Draw(NES* nes) {
     }
 
     UI_DrawMainMenuBar(nes);
+
     igEnd(); // End of "cEMU_MainHost"
 
     // --- Draw all dockable windows ---
-    //if (ui_showGameScreen) UI_GameScreenWindow(nes); // Must be called for docking to work, even if hidden by user later
+    if (ui_showGameScreen) UI_GameScreenWindow(nes); // Must be called for docking to work, even if hidden by user later
     if (ui_showCpuWindow) UI_CpuWindow(nes);
     //if (ui_showPpuViewer) UI_PPUViewer(nes);
     if (ui_showLog) UI_LogWindow();
@@ -1361,11 +1495,13 @@ void UI_Draw(NES* nes) {
     if (ui_showDisassembler) UI_DrawDisassembler(nes);
     if (ui_showToolbar) UI_DebugToolbar(nes); // Debug Controls window
     
-    UI_DrawStatusBar(nes); // Status bar is also a dockable window now
+    UI_DrawStatusBar(nes);
 
     // --- Modals and non-docked utility windows ---
     if (ui_showSettingsWindow) UI_SettingsWindow(nes);
     if (ui_showAboutWindow) UI_DrawAboutWindow();
+    if (ui_showCreditsWindow) UI_DrawCreditsWindow();
+    if (ui_showLicenceWindow) UI_DrawLicenceWindow();
 }
 
 
@@ -1432,6 +1568,8 @@ void UI_Update(NES* nes) {
     // igShowDemoWindow(NULL); // Uncomment for ImGui debugging
 
     UI_Draw(nes); 
+
+    ImPlot_ShowDemoWindow(NULL); // Uncomment for ImPlot debugging
 
     // Rendering with SDL_gpu
     igRender();
@@ -1500,7 +1638,7 @@ void UI_Shutdown() {
     // REFACTOR-NOTE: Save recent ROMs list, window positions/docking layout (imgui.ini handles docking if enabled).
     // Consider saving settings (theme, volume) to a config file.
 
-    DEBUG_INFO("Shutting down UI...");
+    DEBUG_INFO("Shutting down UI");
 
     // Wait for GPU to finish any pending operations
     if (gpu_device) {
@@ -1508,7 +1646,7 @@ void UI_Shutdown() {
     }
 
     // Shutdown ImGui backends
-    //ImGui_ImplSDLGPU3_Shutdown();
+    ImGui_ImplSDLGPU3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     igDestroyContext(NULL); // Pass the context if you stored it, NULL for default
 
@@ -1557,5 +1695,5 @@ void UI_Shutdown() {
     }
     SDL_Quit();
 
-    DEBUG_INFO("UI Shutdown complete.");
+    DEBUG_INFO("UI Shutdown complete");
 }

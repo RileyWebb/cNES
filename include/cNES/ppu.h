@@ -13,8 +13,9 @@ typedef struct NES NES;
 #define PPU_OAM_SIZE           0x100  // 256 bytes for Primary Object Attribute Memory (64 sprites * 4 bytes)
 #define PPU_SECONDARY_OAM_SIZE 32     // 8 sprites * 4 bytes each for sprites on current scanline
 
-#define PPU_SCREEN_WIDTH  256
-#define PPU_SCREEN_HEIGHT 240
+// Define framebuffer dimensions
+#define PPU_FRAMEBUFFER_WIDTH 256
+#define PPU_FRAMEBUFFER_HEIGHT 240
 
 // --- PPU Register Bit Definitions ---
 
@@ -59,6 +60,7 @@ typedef struct {
     uint8_t attributes;   // Raw attribute byte (palette, priority, flips)
     uint8_t pattern_low;  // Pattern data for the current row (low bits)
     uint8_t pattern_high; // Pattern data for the current row (high bits)
+    uint8_t original_oam_index;
     // Note: Original Y from OAM isn't stored here as row_in_sprite is calculated during fetch
 } SpriteShifter;
 
@@ -112,12 +114,15 @@ typedef struct PPU {
     bool          sprite_zero_on_current_scanline; // True if sprite 0 is among those in secondary_oam
     SpriteShifter sprite_shifters[8]; // Holds pattern data and attributes for up to 8 sprites on the current scanline
 
+    uint8_t secondary_oam_original_indices[8];
+    bool sprite_zero_found_for_next_scanline;
+
     // Cartridge and System Configuration
     MirrorMode mirror_mode; // Nametable mirroring mode set by cartridge
 
     // Output
-    uint32_t framebuffer[PPU_SCREEN_WIDTH * PPU_SCREEN_HEIGHT]; // Pixel data (e.g., ARGB32)
-
+    //uint32_t framebuffer[PPU_FRAMEBUFFER_WIDTH * PPU_FRAMEBUFFER_HEIGHT];
+    uint32_t *framebuffer;
 } PPU;
 
 // --- PPU Lifecycle Functions ---
