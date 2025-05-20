@@ -1,5 +1,10 @@
 # cNES
 
+## Builiding
+
+### Windows (MinGW)
+https://github.com/ScriptTiger/LuaJIT-For-Windows
+
 - use sdlgpu
 - refactor cpu to use lookup table (not switch statement)
 - plugin loading

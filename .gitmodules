@@ -1,9 +1,7 @@
-[submodule "ext/glew"]
-	path = ext/glew
-	url = https://github.com/Perlmint/glew-cmake
 [submodule "ext/cimgui"]
 	path = ext/cimgui
 	url = https://github.com/cimgui/cimgui
+	branch = docking_inter
 [submodule "ext/cimplot"]
 	path = ext/cimplot
 	url = https://github.com/cimgui/cimplot
