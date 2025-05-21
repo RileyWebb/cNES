@@ -4,6 +4,8 @@
 /.idea/
 /.vscode/
 
+/ext/cimgui/*
+
 *.key
 
 CMakeLists.txt.user
