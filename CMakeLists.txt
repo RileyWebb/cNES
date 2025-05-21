@@ -1,7 +1,8 @@
-cmake_minimum_required(VERSION 3.29.6)
+cmake_minimum_required(VERSION 3.10)
 project(cNES C)
 
-set(CMAKE_C_STANDARD_REQUIRED 99)
+set(CMAKE_C_STANDARD 17)
+set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
 set(CMAKE_BINARY_DIR ${PROJECT_SOURCE_DIR}/bin)
@@ -12,15 +13,27 @@ add_subdirectory(ext)
 
 #cNES
 file(GLOB SOURCES src/*.c src/cNES/*.c src/ui/*.c)
-add_executable(cNES ${SOURCES})
+add_executable(cNES 
+        src/main.c 
+        src/debug.c 
+        src/profiler.c 
+        src/ui/ui.c 
+        src/ui/cimgui_markdown.c 
+        src/cNES/bus.c 
+        src/cNES/cpu.c 
+        src/cNES/debugging.c 
+        src/cNES/nes.c 
+        src/cNES/ppu_sdlgpu.c 
+        src/cNES/ppu.c
+)
 
 if (WIN32)
     set(PLATFORM_LIBS mingw32)
-    add_definitions()
+    #add_definitions()
 endif()
 
 
-target_link_libraries(cNES PRIVATE ${PLATFORM_LIBS} cimgui_with_backend cimplot) #SDL2main)# cglm stb)#vulkan glew gl glu)
+target_link_libraries(cNES PRIVATE ${PLATFORM_LIBS} cimgui cimplot) #SDL2main)# cglm stb)#vulkan glew gl glu)
 target_link_libraries(cNES PUBLIC SDL3-shared) #SDL2)
 
 target_compile_options(cNES PRIVATE
@@ -37,12 +50,7 @@ target_compile_options(cNES PRIVATE
         >
 )
 
-target_compile_definitions(
-	cNES
-	PRIVATE
-	CIMGUI_USE_SDL3=1
-	CIMGUI_USE_SDLGPU3=1
-)
+target_compile_definitions(cNES PUBLIC -DCIMGUI_USE_SDL3 -DCIMGUI_USE_SDLGPU3)
 
 add_custom_target(copy_data
         COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
@@ -56,9 +64,9 @@ add_custom_target(copy_info
         ${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
         
 add_custom_target(copy_tests
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests
                 ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/tests
 )
 
-add_dependencies(cNES copy_info copy_tests)
+add_dependencies(cNES copy_info copy_tests copy_data)

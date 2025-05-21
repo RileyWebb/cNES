@@ -5,7 +5,7 @@
 
 #include "debug.h"
 
-#include "ui.h"
+#include "ui/ui.h"
 #include "cNES/cpu.h"
 #include "cNES/ppu.h"
 #include "cNES/bus.h"

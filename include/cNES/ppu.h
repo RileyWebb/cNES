@@ -146,6 +146,7 @@ void PPU_CHR_Write(PPU *ppu, uint16_t addr, uint8_t value); // Placeholder, actu
 
 // --- PPU Configuration ---
 void PPU_SetMirroring(PPU *ppu, MirrorMode mode);
+void PPU_TriggerNMI(PPU *ppu); // Triggers NMI if enabled (not usually called directly)
 // Note: PPU_TriggerNMI is an internal helper in ppu.c, not typically public API.
 // NMI line state is managed by PPU_Step and PPU_WriteRegister(PPUCTRL).
 

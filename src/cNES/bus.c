@@ -50,7 +50,7 @@ uint8_t BUS_Read(NES* nes, uint16_t address) {
         // $8000-$FFFF: PRG ROM
         // Mapper might alter this address. For NROM, it's direct.
         // Assuming nes->bus->prgRom is 32KB and correctly loaded/mirrored for 16KB ROMs.
-        return nes->bus->prgRom[address & (nes->bus->prgRomSize * 0x4000 -1)]; // Mask to PRG ROM size
+        //return nes->bus->prgRom[address & (nes->bus->prgRomSize * 0x4000 -1)]; // Mask to PRG ROM size
         // Simpler NROM: return nes->bus->prgRom[address - 0x8000]; (if prgRom is exactly 32KB for $8000-$FFFF)
         // A more robust solution would be:
         // if (nes->bus->prgRomSize == 1) { // 16KB ROM, mirrored

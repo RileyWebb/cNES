@@ -10,48 +10,108 @@ add_subdirectory(glew EXCLUDE_FROM_ALL)
 #add_library(stb INTERFACE ${STB_SOURCES})
 #target_include_directories(stb INTERFACE stb)
 
-# CIMGUI
-project(cimgui LANGUAGES CXX)
+# IMGUI
+project(imgui LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-list(APPEND CIMGUI_LIBRARIES)
-include(cimgui/backend_test/cmake/GenerateCimguiBindings.cmake)
+file(GLOB IMGUI_SOURCES
+        cimgui/imgui/imgui.cpp
+        cimgui/imgui/imgui_draw.cpp
+        cimgui/imgui/imgui_demo.cpp
+        cimgui/imgui/imgui_widgets.cpp
+        cimgui/imgui/imgui_tables.cpp)
 
-set(inclulist ${sdl3_SOURCE_DIR}/include)
-GenerateCimguiBindings(cimgui_with_backend sdl3 sdlgpu3 inclulist)
-target_link_libraries(cimgui_with_backend PRIVATE SDL3::SDL3)
+add_library(imgui SHARED ${IMGUI_SOURCES})
 
-set(IMGUI_LIBRARIES )
+target_include_directories(imgui PUBLIC cimgui/imgui)
+target_include_directories(imgui PUBLIC cimgui/imgui/backends)
+target_include_directories(imgui PUBLIC sdl/include)
+
+if (WIN32)
+    #target_compile_definitions(imgui PUBLIC IMGUI_IMPL_API="extern \"C\" __declspec(dllexport)")
+else (WIN32)
+    #target_compile_definitions(imgui PUBLIC IMGUI_IMPL_API="extern \"C\"")
+endif (WIN32)
+
+target_compile_definitions(imgui PUBLIC IMGUI_USE_WCHAR32)
+target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS=1)
+
+target_link_libraries(imgui PRIVATE imm32)
+target_link_libraries(imgui PUBLIC SDL3-shared)
+
+set_target_properties(imgui PROPERTIES PREFIX "")
+
+# CIMGUI
+project(cimgui LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+file(READ cimgui/cimgui_impl.h cimgui_impl)
+
+string(FIND "${cimgui_impl}" CIMGUI_USE_SDL3 rendbk_position)
+string(FIND "${cimgui_impl}" CIMGUI_USE_SDLGPU3 platbk_position)
+# If we don't find it, rendbk_position will be -1
+if(rendbk_position EQUAL -1 OR platbk_position EQUAL -1)
+    #get compiler name
+    cmake_path(GET CMAKE_C_COMPILER FILENAME C_COMP)
+    cmake_path(REMOVE_EXTENSION C_COMP)
+    #get includes string
+    execute_process(
+    COMMAND luajit generator.lua ${C_COMP} "internal noimstrv" SDL3 SDLGPU3 "-I${CMAKE_CURRENT_SOURCE_DIR}/sdl/include"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/cimgui/generator
+    ERROR_VARIABLE error_command
+    RESULT_VARIABLE build_command_result
+    )
+    if(NOT ${build_command_result} EQUAL 0)
+        message(STATUS "cimgui generation failed: Do you have LuaJIT?")
+        message(STATUS "cimgui generation failed: ${build_command_result}")
+        message(STATUS "error_command: ${error_command}")
+    endif()
+endif()
+
+add_library(cimgui SHARED 
+    cimgui/cimgui.cpp
+    cimgui/cimgui_impl.cpp
+    cimgui/imgui/backends/imgui_impl_sdl3.cpp
+    cimgui/imgui/backends/imgui_impl_sdlgpu3.cpp
+)
+
+target_include_directories(cimgui INTERFACE cimgui)
+target_include_directories(cimgui PRIVATE cimgui/imgui)
+target_include_directories(cimgui PRIVATE cimgui/generator/output/)
+target_include_directories(cimgui PUBLIC cimgui/imgui/backends/)
+
+#target_compile_definitions(cimgui PUBLIC "-DIMGUI_USER_CONFIG=\"cimgui/cimconfig.h\"")
 
 if (WIN32)
     target_compile_definitions(cimgui PUBLIC IMGUI_IMPL_API=extern\t\"C\"\t__declspec\(dllexport\))
-    list(APPEND CIMGUI_LIBRARIES imm32)
 else (WIN32)
     target_compile_definitions(cimgui PUBLIC IMGUI_IMPL_API=extern\t\"C\"\t)
 endif (WIN32)
 
-target_link_libraries(cimgui PUBLIC SDL3-shared ${CIMGUI_LIBRARIES} stdc++ m)
+target_link_libraries(cimgui PUBLIC imgui)
+target_link_libraries(cimgui PRIVATE imm32 stdc++ m)
+
+set_target_properties(cimgui PROPERTIES PREFIX "")
 
 #CIMPLOT
-project(cimplot LANGUAGES CXX)
+project(cimplot LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_library(cimplot STATIC
-        cimplot/cimplot.cpp
-        cimplot/implot/implot.cpp
-        cimplot/implot/implot_demo.cpp
-        cimplot/implot/implot_items.cpp)
-target_include_directories(cimplot INTERFACE cimplot)
+file(GLOB CIMPLOT_SOURCES
+    cimplot/cimplot.cpp
+    cimplot/implot/implot_demo.cpp
+    cimplot/implot/implot_items.cpp
+    cimplot/implot/implot.cpp
+)
+
+add_library(cimplot SHARED ${CIMPLOT_SOURCES})
+
+target_include_directories(cimplot PUBLIC cimplot)
 target_include_directories(cimplot PUBLIC cimgui)
 target_include_directories(cimplot PRIVATE cimgui/imgui)
 
-if (WIN32)
-    target_compile_definitions(cimplot PUBLIC IMGUI_IMPL_API=extern\t\"C\"\t__declspec\(dllexport\))
-    #list(APPEND CIMGUI_LIBRARIES imm32)
-else (WIN32)
-    target_compile_definitions(cimplot PUBLIC IMGUI_IMPL_API=extern\t\"C\"\t)
-endif (WIN32)
+target_link_libraries(cimplot PUBLIC cimgui imgui)
 
-target_link_libraries(cimplot PUBLIC cimgui)
+set_target_properties(cimplot PROPERTIES PREFIX "")

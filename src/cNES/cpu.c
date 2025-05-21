@@ -88,7 +88,7 @@ static inline uint16_t CPU_Pop16(CPU *cpu)
     return (uint16_t)lo | ((uint16_t)hi << 8);
 }
 
-inline void CPU_SetFlag(CPU *cpu, uint8_t flag, int value) 
+void CPU_SetFlag(CPU *cpu, uint8_t flag, int value) 
 {
     if (value)
         cpu->status |= flag; // Set the flag
@@ -96,7 +96,7 @@ inline void CPU_SetFlag(CPU *cpu, uint8_t flag, int value)
         cpu->status &= ~flag; // Clear the flag
 }
 
-inline uint8_t CPU_GetFlag(CPU *cpu, uint8_t flag) 
+uint8_t CPU_GetFlag(CPU *cpu, uint8_t flag) 
 {
     return (cpu->status & flag); // Return the status of the flag
 }

@@ -16,7 +16,6 @@ https://github.com/ScriptTiger/LuaJIT-For-Windows
 
 - GPU BASED PPU RENDERING
 - SETTINGS MENU AND SAVE SETTINGS
-- VERSION.h FILE
 - Performance profiler (flame graph)
 - refactor immarkdown
 - add utf8 support and icons

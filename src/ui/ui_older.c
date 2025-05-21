@@ -13,15 +13,18 @@
 #include <time.h>   // For logging timestamp
 
 #include "debug.h"
-#include "ui/cimgui_markdown.h"
+#include "profiler.h"
 
 #include "cNES/nes.h"
 #include "cNES/cpu.h"
 #include "cNES/ppu.h"
 #include "cNES/bus.h"
 #include "cNES/debugging.h"
+#include "cNES/version.h"
 
-#include "ui.h"
+#include "ui/cimgui_markdown.h"
+
+#include "ui/ui.h"
 
 // --- SDL and ImGui Globals ---
 SDL_Window *window;
@@ -30,11 +33,7 @@ ImGuiIO* ioptr;
 ImVec4 clear_color; // Clear color for the swapchain
 
 // --- UI State ---
-static bool ui_showPpuViewer = true;
-static bool ui_showLog = true;
 static bool ui_paused = false;
-static bool ui_showMemoryViewer = true;
-static bool ui_showSettingsWindow = false;
 static char ui_romPath[256] = "";
 static char ui_currentRomName[256] = "No ROM Loaded";
 static char ui_logBuffer[8192] = ""; // REFACTOR-NOTE: Increased buffer size. Consider a circular buffer for very extensive logging.
@@ -47,9 +46,7 @@ static bool ui_sdl_fullscreen = false;
 static char ui_recentRoms[UI_MAX_RECENT_ROMS][256];
 static int ui_recentRomsCount = 0;
 
-static bool ui_showAboutWindow = false;
-static bool ui_showCreditsWindow = false;
-static bool ui_showLicenceWindow = false;
+
 static int ui_ppuViewerSelectedPalette = 0;
 static bool ui_openSaveStateModal = false;
 static bool ui_openLoadStateModal = false;
@@ -57,10 +54,21 @@ static int ui_selectedSaveLoadSlot = 0;
 
 static uint8_t nes_input_state[2] = {0, 0};
 
-static bool ui_showCpuWindow = true;
-static bool ui_showToolbar = true;
-static bool ui_showDisassembler = true;
-static bool ui_showGameScreen = true; // REFACTOR-NOTE: Game screen is now a dockable window.
+bool ui_showCpuWindow = true;
+bool ui_showToolbar = true;
+bool ui_showDisassembler = true;
+bool ui_showGameScreen = true;
+bool ui_showProfilerWindow = true;
+bool ui_showPpuViewer = true;
+bool ui_showLog = true;
+bool ui_showMemoryViewer = true;
+bool ui_showSettingsWindow = false;
+
+bool ui_showAboutWindow = false;
+bool ui_showCreditsWindow = false;
+bool ui_showLicenceWindow = false;
+
+static Profiler ui_profiler_instance; // Added Profiler instance
 
 static bool ui_first_frame = true; // Flag for applying default docking layout
 
@@ -75,6 +83,7 @@ static SDL_GPUTexture* ppu_game_texture = NULL;
 static SDL_GPUSampler* ppu_game_sampler = NULL;
 static SDL_GPUTransferBuffer* ppu_game_transfer_buffer = NULL; // Renamed to avoid conflict
 static SDL_GPUTextureSamplerBinding ppu_game_texture_sampler_binding = {0};
+
 
 // --- Helper: Append to log ---
 void UI_Log(const char* fmt, ...) {
@@ -329,6 +338,7 @@ void UI_DrawFileMenu(NES* nes) {
 
 void UI_LogWindow() {
     if (!ui_showLog) return;
+    int prof_section = Profiler_BeginSection(&ui_profiler_instance, "UI_LogWindow");
     if (igBegin("Log", &ui_showLog, ImGuiWindowFlags_None)) {
         if (igButton("Clear", (ImVec2){0,0})) {
             ui_logLen = 0;
@@ -350,6 +360,7 @@ void UI_LogWindow() {
         igEndChild();
     }
     igEnd();
+    Profiler_EndSection(&ui_profiler_instance, prof_section);
 }
 
 
@@ -418,6 +429,8 @@ static void UI_RenderPatternTable_GPU(SDL_GPUDevice* device, NES* nes, int table
 
 void UI_PPUViewer(NES* nes) {
     if (!ui_showPpuViewer) return;
+    int prof_section = Profiler_BeginSection(&ui_profiler_instance, "UI_PPUViewer");
+
     if (!nes || !nes->ppu) { // If window was open but NES becomes null, hide it.
         if (ui_showPpuViewer && (!nes || !nes->ppu)) ui_showPpuViewer = false;
         return;
@@ -585,6 +598,7 @@ void UI_PPUViewer(NES* nes) {
         // REFACTOR-NOTE: Add Nametable viewer section here (complex, involves rendering tiles based on nametable, attribute table, and current PPU scroll).
     }
     igEnd();
+    Profiler_EndSection(&ui_profiler_instance, prof_section);
 }
 
 
@@ -595,6 +609,8 @@ static int ui_memoryViewerRows = 16;
 
 void UI_MemoryViewer(NES* nes) {
     if (!ui_showMemoryViewer) return;
+    int prof_section = Profiler_BeginSection(&ui_profiler_instance, "UI_MemoryViewer");
+
     if (!nes) {
         if (ui_showMemoryViewer) ui_showMemoryViewer = false;
         return;
@@ -657,10 +673,13 @@ void UI_MemoryViewer(NES* nes) {
         igEndChild();
     }
     igEnd();
+    Profiler_EndSection(&ui_profiler_instance, prof_section);
 }
 
 void UI_DrawDisassembler(NES* nes) {
     if (!ui_showDisassembler) return;
+    int prof_section = Profiler_BeginSection(&ui_profiler_instance, "UI_DrawDisassembler");
+
     if (!nes || !nes->cpu) {
         if (ui_showDisassembler && (!nes || !nes->cpu)) ui_showDisassembler = false;
         return;
@@ -728,6 +747,7 @@ void UI_DrawDisassembler(NES* nes) {
         igEndChild();
     }
     igEnd();
+    Profiler_EndSection(&ui_profiler_instance, prof_section);
 }
 
 
@@ -865,7 +885,7 @@ void UI_Init() {
         exit(1);
     }
 
-    gpu_device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV| SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_METALLIB,
+    gpu_device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV,
 #ifdef DEBUG
         true,
 #else
@@ -919,11 +939,14 @@ void UI_Init() {
     strncpy(ui_currentRomName, "No ROM Loaded", sizeof(ui_currentRomName) -1);
     ui_currentRomName[sizeof(ui_currentRomName)-1] = '\0';
 
+    Profiler_Init(&ui_profiler_instance); // Initialize Profiler
+
     UI_Log("cEMU Initialized with SDL3_gpu. Welcome!");
 }
 
 void UI_SettingsWindow(NES* nes) {
     if (!ui_showSettingsWindow) return;
+    int prof_section = Profiler_BeginSection(&ui_profiler_instance, "UI_SettingsWindow");
 
     igSetNextWindowSize((ImVec2){480, 400}, ImGuiCond_FirstUseEver);
     if (igBegin("Settings", &ui_showSettingsWindow, ImGuiWindowFlags_None)) {
@@ -967,10 +990,12 @@ void UI_SettingsWindow(NES* nes) {
         if (igButton("Close", (ImVec2){-FLT_MIN,0})) ui_showSettingsWindow = false;
     }
     igEnd();
+    Profiler_EndSection(&ui_profiler_instance, prof_section);
 }
 
 void UI_DrawAboutWindow() {
     if (!ui_showAboutWindow) return;
+    int prof_section = Profiler_BeginSection(&ui_profiler_instance, "UI_DrawAboutWindow");
     igSetNextWindowSize((ImVec2){400, 250}, ImGuiCond_FirstUseEver); // REFACTOR-NOTE: Slightly larger for more info
     if (igBegin("About cEMU", &ui_showAboutWindow, ImGuiWindowFlags_AlwaysAutoResize)) {
         igText("cEMU - A NES Emulator Project");
@@ -987,6 +1012,7 @@ void UI_DrawAboutWindow() {
         if (igButton("OK", (ImVec2){-FLT_MIN,0})) ui_showAboutWindow = false;
     }
     igEnd();
+    Profiler_EndSection(&ui_profiler_instance, prof_section);
 }
 
 static ImGuiMarkdown_Config mdConfig;
@@ -1006,6 +1032,7 @@ static void UI_MD_LinkCallback(ImGuiMarkdown_LinkCallbackData link)
 
 void UI_DrawCreditsWindow() {
     if (!ui_showCreditsWindow) return;
+    int prof_section = Profiler_BeginSection(&ui_profiler_instance, "UI_DrawCreditsWindow");
     igSetNextWindowSize((ImVec2){400, 250}, ImGuiCond_FirstUseEver);
     if (igBegin("Credits", &ui_showCreditsWindow, ImGuiWindowFlags_None)) {
         ImGuiMarkdown_Config_Init(&mdConfig); // Initialize with defaults
@@ -1046,10 +1073,12 @@ void UI_DrawCreditsWindow() {
         }
     }
     igEnd();
+    Profiler_EndSection(&ui_profiler_instance, prof_section);
 }
 
 void UI_DrawLicenceWindow() {
     if (!ui_showLicenceWindow) return;
+    int prof_section = Profiler_BeginSection(&ui_profiler_instance, "UI_DrawLicenceWindow");
     igSetNextWindowSize((ImVec2){400, 250}, ImGuiCond_FirstUseEver);
     if (igBegin("Licence", &ui_showLicenceWindow, ImGuiWindowFlags_None)) {
         ImGuiMarkdown_Config_Init(&mdConfig); // Initialize with defaults
@@ -1090,6 +1119,7 @@ void UI_DrawLicenceWindow() {
         }
     }
     igEnd();
+    Profiler_EndSection(&ui_profiler_instance, prof_section);
 }
 
 static void UI_ShowAllDebugWindows() {
@@ -1098,6 +1128,7 @@ static void UI_ShowAllDebugWindows() {
     ui_showMemoryViewer = true;
     ui_showLog = true;
     ui_showDisassembler = true;
+    ui_showProfilerWindow = true; // Show profiler too
 }
 
 static void UI_HideAllDebugWindows() {
@@ -1106,10 +1137,12 @@ static void UI_HideAllDebugWindows() {
     ui_showMemoryViewer = false;
     // ui_showLog = false; // Log is often useful to keep visible
     ui_showDisassembler = false;
+    ui_showProfilerWindow = false; // Hide profiler too
 }
 
 static void UI_DebugToolbar(NES* nes) {
     if (!ui_showToolbar) return;
+    int prof_section = Profiler_BeginSection(&ui_profiler_instance, "UI_DebugToolbar");
 
     // This toolbar is a regular dockable window.
     if (igBegin("Debug Controls", &ui_showToolbar, ImGuiWindowFlags_None )) { // Removed restrictive flags to allow docking/resizing
@@ -1132,6 +1165,7 @@ static void UI_DebugToolbar(NES* nes) {
         igCheckbox("Disasm", &ui_showDisassembler);
     }
     igEnd();
+    Profiler_EndSection(&ui_profiler_instance, prof_section);
 }
 
 static void UI_DrawDebugMenu() {
@@ -1141,6 +1175,7 @@ static void UI_DrawDebugMenu() {
         igMenuItem_Bool("Memory Viewer", NULL, &ui_showMemoryViewer, true);
         igMenuItem_Bool("Log Window", NULL, &ui_showLog, true);
         igMenuItem_Bool("Disassembler", NULL, &ui_showDisassembler, true);
+        igMenuItem_Bool("Profiler", NULL, &ui_showProfilerWindow, true); // Added Profiler toggle
         igSeparator();
         igMenuItem_Bool("Debug Controls Window", NULL, &ui_showToolbar, true); // Renamed from Toolbar
         igSeparator();
@@ -1152,6 +1187,7 @@ static void UI_DrawDebugMenu() {
 
 static void UI_CpuWindow(NES* nes) {
     if (!ui_showCpuWindow) return;
+    int prof_section = Profiler_BeginSection(&ui_profiler_instance, "UI_CpuWindow");
     if (!nes || !nes->cpu) {
          if (ui_showCpuWindow && (!nes || !nes->cpu)) ui_showCpuWindow = false;
         return;
@@ -1186,9 +1222,11 @@ static void UI_CpuWindow(NES* nes) {
         // REFACTOR-NOTE: Add instruction timing/cycle count for current/last instruction (requires more detailed CPU state).
     }
     igEnd();
+    Profiler_EndSection(&ui_profiler_instance, prof_section);
 }
 
 void UI_DrawMainMenuBar(NES* nes) {
+    int prof_section = Profiler_BeginSection(&ui_profiler_instance, "UI_DrawMainMenuBar");
     if (igBeginMainMenuBar()) {
         UI_DrawFileMenu(nes);
         if (igBeginMenu("Emulation", true)) {
@@ -1208,6 +1246,7 @@ void UI_DrawMainMenuBar(NES* nes) {
             igMenuItem_Bool("Disassembler", NULL, &ui_showDisassembler, true);
             igMenuItem_Bool("Log Window", NULL, &ui_showLog, true);
             igMenuItem_Bool("Debug Controls", NULL, &ui_showToolbar, true); // Matches window title
+            igMenuItem_Bool("Profiler", NULL, &ui_showProfilerWindow, true); // Added Profiler toggle
             igSeparator();
             if (igMenuItem_Bool("Toggle Fullscreen", "F11", ui_sdl_fullscreen, true)) UI_ToggleFullscreen();
             igEndMenu();
@@ -1226,12 +1265,201 @@ void UI_DrawMainMenuBar(NES* nes) {
         }
         igEndMainMenuBar();
     }
+    Profiler_EndSection(&ui_profiler_instance, prof_section);
 }
 
+// Helper to generate a color from a string (simple hash)
+static ImU32 GetColorForString(const char* str) {
+    ImU32 hash = 0;
+    while (*str) {
+        hash = (hash << 5) + hash + (*str++);
+    }
+    // Mix the hash to get more varied colors
+    hash = (hash ^ (hash >> 16)) * 0x85ebca6b;
+    hash = (hash ^ (hash >> 13)) * 0xc2b2ae35;
+    hash = (hash ^ (hash >> 16));
+
+    // Ensure reasonable brightness and alpha
+    unsigned char r = (hash & 0xFF0000) >> 16;
+    unsigned char g = (hash & 0x00FF00) >> 8;
+    unsigned char b = (hash & 0x0000FF);
+
+    // Make sure colors are not too dark
+    r = (r < 50) ? (r + 50) : r;
+    g = (g < 50) ? (g + 50) : g;
+    b = (b < 50) ? (b + 50) : b;
+    
+    
+    return (255 << 24) | (r << 16) | (g << 8) | b;
+}
+
+void Profiler_DrawWindow(Profiler* profiler, bool* p_open) {
+    if (!profiler || !p_open || !(*p_open)) {
+        return;
+    }
+
+    igSetNextWindowSize((ImVec2){500, 400}, ImGuiCond_FirstUseEver);
+    if (igBegin("Profiler", p_open, ImGuiWindowFlags_None)) {
+        igText("FPS: %.1f", profiler->current_fps);
+        igSameLine(0, 20);
+        igText("Frame Time: %.2f ms (Avg: %.2f ms, Max: %.2f ms)",
+               profiler->current_frame_time_ms,
+               profiler->avg_frame_time_ms,
+               profiler->max_frame_time_ms);
+
+        if (ImPlot_BeginPlot("Frame Times", (ImVec2){-1, 150}, ImPlotFlags_None)) {
+            ImPlot_SetupAxes("Frame Index (History)", "Time (ms)", ImPlotAxisFlags_Lock, ImPlotAxisFlags_AutoFit);
+            ImPlot_SetupAxisLimits(ImAxis_X1, 0, PROFILER_HISTORY_SIZE -1, ImGuiCond_Always);
+            // Automatic Y axis scaling or set manually:
+            // ImPlot_SetupAxisLimits(ImAxis_Y1, 0, profiler->max_frame_time_ms > 0 ? profiler->max_frame_time_ms * 1.2 : 33.0, ImGuiCond_Once);
+
+
+            // Need to pass data in a way ImPlot understands (e.g. array of X values, array of Y values)
+            // Or use the offset and stride version if data is contiguous.
+            // For now, let's make a simple X array.
+            float x_values[PROFILER_HISTORY_SIZE];
+            for(int i=0; i<PROFILER_HISTORY_SIZE; ++i) x_values[i] = (float)i;
+            
+            // ImPlot expects float arrays for PlotLine. We have double.
+            // We can either cast or use a temporary float buffer.
+            // For simplicity in this example, let's cast if the function allows, or use a temp buffer.
+            // ImPlot::PlotLine typically takes float*. Let's prepare a float buffer.
+            float frame_times_float[PROFILER_HISTORY_SIZE];
+            for(int i=0; i<PROFILER_HISTORY_SIZE; ++i) {
+                // Shift data so current_frame_history_idx is the last point
+                int data_idx = (profiler->frame_history_idx + i) % PROFILER_HISTORY_SIZE;
+                frame_times_float[i] = (float)profiler->frame_times_ms[data_idx];
+            }
+
+            ImPlot_PlotLine_FloatPtrFloatPtr("Frame Time (ms)", x_values, frame_times_float, PROFILER_HISTORY_SIZE, 0, 0, sizeof(float));
+            ImPlot_EndPlot();
+        }
+
+        igSeparator();
+        igText("Timed Sections (Last Frame):"); // Table now shows last frame's times for consistency with flame graph
+
+        if (igBeginTable("SectionsTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit, (ImVec2){0,0},0)) {
+            igTableSetupColumn("Section Name", 0,0,0);
+            igTableSetupColumn("Time (ms)",0,0,0); // Current time from last frame
+            igTableSetupColumn("Avg (ms)",0,0,0); // Avg over history
+            igTableSetupColumn("Max (ms)",0,0,0); // Max over history
+            igTableHeadersRow();
+
+            for (int i = 0; i < profiler->num_sections; ++i) {
+                ProfilerSection* sec = &profiler->sections[i];
+                // Find this section in the last_frame_flame_items to get its most recent duration
+                // This is a bit inefficient; ideally, current_time_ms would be from the last completed frame.
+                // For simplicity, we'll use the sec->current_time_ms which is updated when its EndSection is called.
+                // If a section didn't run in the last frame, its current_time_ms might be from an older frame.
+                // The flame graph, however, will only show sections that ran in the last frame.
+                igTableNextRow(0,0);
+                igTableSetColumnIndex(0); igText("%s", sec->name);
+                igTableSetColumnIndex(1); igText("%.3f", sec->current_time_ms); // This is the most recent measurement
+                igTableSetColumnIndex(2); igText("%.3f", sec->avg_time_ms);
+                igTableSetColumnIndex(3); igText("%.3f", sec->max_time_ms);
+            }
+            igEndTable();
+        }
+        
+        igSeparator();
+        igText("Flame Graph (Last Frame):");
+
+        ImDrawList* draw_list = igGetWindowDrawList();
+        ImVec2 canvas_pos;
+        igGetCursorScreenPos(&canvas_pos);
+        ImVec2 canvas_size;
+        igGetContentRegionAvail(&canvas_size);
+        if (canvas_size.x < 50) canvas_size.x = 50;
+        if (canvas_size.y < 50) canvas_size.y = 50;
+        
+        float flame_graph_height = 200; // Desired height for the flame graph area
+        if (flame_graph_height > canvas_size.y) flame_graph_height = canvas_size.y;
+        canvas_size.y = flame_graph_height;
+
+
+        ImGuiWindow* current_window = igGetCurrentWindow();
+        ImRect bb = {canvas_pos, {canvas_pos.x + canvas_size.x, canvas_pos.y + canvas_size.y}};
+        igItemSize_Rect(bb, 0.0f); // Reserve space for the custom drawing
+        if (!igItemAdd(bb, 0, NULL, ImGuiItemFlags_None)) {
+            igEnd();
+            return;
+        }
+        
+        ImDrawList_AddRectFilled(draw_list, canvas_pos, (ImVec2){canvas_pos.x + canvas_size.x, canvas_pos.y + canvas_size.y}, igGetColorU32_Col(ImGuiCol_FrameBg, 1.0f), 0.0f, 0);
+
+        if (profiler->last_frame_flame_items_count > 0 && profiler->current_frame_time_ms > 0.00001) {
+            float bar_height = 18.0f;
+            float bar_padding_y = 2.0f;
+            float total_frame_time_ms = (float)profiler->current_frame_time_ms;
+            float pixels_per_ms = canvas_size.x / total_frame_time_ms;
+
+            int max_depth = 0;
+            for (int i = 0; i < profiler->last_frame_flame_items_count; ++i) {
+                if (profiler->last_frame_flame_items[i].depth > max_depth) {
+                    max_depth = profiler->last_frame_flame_items[i].depth;
+                }
+            }
+            // Adjust canvas_size.y if needed based on max_depth, or scale bar_height
+            // For now, let's assume fixed bar_height and clip if it overflows canvas_size.y
+
+            for (int i = 0; i < profiler->last_frame_flame_items_count; ++i) {
+                FlameGraphItem* item = &profiler->last_frame_flame_items[i];
+
+                float x0 = canvas_pos.x + (float)item->start_time_ms * pixels_per_ms;
+                float x1 = canvas_pos.x + (float)(item->start_time_ms + item->duration_ms) * pixels_per_ms;
+                // Y position: top of the graph is depth 0. Deeper calls go downwards.
+                float y0 = canvas_pos.y + (float)item->depth * (bar_height + bar_padding_y);
+                float y1 = y0 + bar_height;
+
+                // Clip to canvas
+                if (x1 < canvas_pos.x || x0 > canvas_pos.x + canvas_size.x || y1 < canvas_pos.y || y0 > canvas_pos.y + canvas_size.y) {
+                    continue;
+                }
+                x0 = (x0 < canvas_pos.x) ? canvas_pos.x : x0;
+                x1 = (x1 > canvas_pos.x + canvas_size.x) ? canvas_pos.x + canvas_size.x : x1;
+                y0 = (y0 < canvas_pos.y) ? canvas_pos.y : y0;
+                y1 = (y1 > canvas_pos.y + canvas_size.y) ? canvas_pos.y + canvas_size.y : y1;
+                
+                if (x1 <= x0 || y1 <= y0) continue;
+
+
+                ImU32 color = GetColorForString(item->name);
+                ImDrawList_AddRectFilled(draw_list, (ImVec2){x0, y0}, (ImVec2){x1, y1}, color, 2.0f, ImDrawFlags_RoundCornersAll);
+
+                // Draw text if space permits
+                ImVec2 text_size;
+                igCalcTextSize(&text_size, item->name, NULL, false, 0.0f);
+
+                if (x1 - x0 > text_size.x + 4.0f) { // Check if text fits
+                    ImVec2 text_pos = {x0 + 2.0f, y0 + (bar_height - igGetTextLineHeight()) / 2.0f};
+                    // Clip text to rect bounds
+                    ImVec4 clip_rect = {x0, y0, x1, y1};
+                    ImDrawList_AddText_Vec2(draw_list, text_pos, igGetColorU32_Col(ImGuiCol_Text, 1.0f), item->name, NULL);
+                }
+
+                // Tooltip
+                if (igIsMouseHoveringRect((ImVec2){x0,y0}, (ImVec2){x1,y1}, true)) {
+                    igBeginTooltip();
+                    igText("%s", item->name);
+                    igText("Time: %.3f ms", item->duration_ms);
+                    igText("Start: %.3f ms", item->start_time_ms);
+                    igText("Depth: %d", item->depth);
+                    igEndTooltip();
+                }
+            }
+        } else {
+            igText("No data for flame graph or frame time is zero.");
+        }
+        //igDummy((ImVec2){0.0f, flame_graph_height}); // Consume the space if ItemSize/ItemAdd wasn't enough or for layout.
+                                                 // ItemSize + ItemAdd should be sufficient.
+    }
+    igEnd();
+}
 
 void UI_GameScreenWindow(NES* nes)
 {
     if (!ui_showGameScreen) return;
+    int prof_section = Profiler_BeginSection(&ui_profiler_instance, "UI_GameScreenWindow");
 
     igPushStyleVar_Vec2(ImGuiStyleVar_WindowPadding, (ImVec2){0,0});
     if (igBegin("Game Screen", &ui_showGameScreen, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
@@ -1372,10 +1600,12 @@ void UI_GameScreenWindow(NES* nes)
     }
     igEnd();
     igPopStyleVar(1);
+    Profiler_EndSection(&ui_profiler_instance, prof_section);
 }
 
 void UI_DrawStatusBar(NES* nes) 
 {
+    int prof_section = Profiler_BeginSection(&ui_profiler_instance, "UI_DrawStatusBar");
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize;
 
     ImGuiViewport* viewport = igGetMainViewport();
@@ -1383,20 +1613,12 @@ void UI_DrawStatusBar(NES* nes)
     igSetNextWindowPos((ImVec2){viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - 28}, ImGuiCond_Always, (ImVec2){0,0});
 
     if (igBegin("Status Bar", NULL, flags))  {
-        // Calculate FPS (simple moving average or per-second updates)
-        static uint32_t frame_count = 0;
-        static uint32_t last_fps_time = 0;
-        uint32_t current_ticks = SDL_GetTicks();
-        frame_count++;
-        if (current_ticks - last_fps_time >= 1000) {
-            ui_fps = (float)frame_count / ((current_ticks - last_fps_time)/1000.0f);
-            last_fps_time = current_ticks;
-            frame_count = 0;
-        }
+        // FPS calculation is now handled by the profiler
+        ui_fps = Profiler_GetFPS(&ui_profiler_instance);
         
         igText("FPS: %.1f | ROM: %s | %s", ui_fps, ui_currentRomName, ui_paused ? "Paused" : "Running");
         
-        const char* version_text = "cNES v0.2"; // REFACTOR-NOTE: Consistent versioning
+        const char* version_text = CNES_VERSION_BUILD_STRING; // REFACTOR-NOTE: Consistent versioning
         ImVec2 version_text_size;
         igCalcTextSize(&version_text_size, version_text, NULL, false, 0);
         
@@ -1413,6 +1635,7 @@ void UI_DrawStatusBar(NES* nes)
         igTextDisabled("%s", version_text);
     }
     igEnd();
+    Profiler_EndSection(&ui_profiler_instance, prof_section);
 
     //igSetWindowSize_Str("Status Bar", (ImVec2){igGetMainViewport()->WorkSize.x, 124}, ImGuiCond_Always);
 }
@@ -1433,7 +1656,7 @@ void UI_Draw(NES* nes) {
     igBegin("cEMU_MainHost", NULL, host_flags);
     igPopStyleVar(3);
 
-    ImGuiID dockspace_id = igGetID_Str("cEMU_DockSpace_Main");
+    ImGuiID dockspace_id = igGetID_Str("cEMU_MainHost");
     igDockSpace(dockspace_id, (ImVec2){0.0f, 0.0f}, ImGuiDockNodeFlags_PassthruCentralNode, NULL);
 
     if (ui_first_frame) {
@@ -1444,25 +1667,26 @@ void UI_Draw(NES* nes) {
 
         ImGuiID dock_main_id = dockspace_id; 
         ImGuiID dock_id_statusbar;
-        ImGuiID dock_id_log;
+        ImGuiID dock_id_down;
         ImGuiID dock_id_right;
         ImGuiID dock_id_left;
 
         // Split layout: Status bar at bottom, then Log above status, then main area split left/center/right
         dock_id_statusbar = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Down, 0.0f, NULL, &dock_main_id);
-        dock_id_log = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Down, 0.15f, NULL, &dock_main_id); // Log takes 15% of remaining
+        dock_id_down = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Down, 0.15f, NULL, &dock_main_id); // Log takes 15% of remaining
         dock_id_right = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Right, 0.25f, NULL, &dock_main_id); // Right panel 25%
         dock_id_left = igDockBuilderSplitNode(dock_main_id, ImGuiDir_Left, 0.22f, NULL, &dock_main_id);  // Left panel 22%
         // Center panel is what remains of dock_main_id
 
         igDockBuilderDockWindow("Status Bar", dock_id_statusbar);
-        igDockBuilderDockWindow("Log", dock_id_log);
+        igDockBuilderDockWindow("Log", dock_id_down);
         igDockBuilderDockWindow("Game Screen", dock_main_id); 
         igDockBuilderDockWindow("CPU Registers", dock_id_left);
         igDockBuilderDockWindow("Disassembler", dock_id_left); 
         igDockBuilderDockWindow("PPU Viewer", dock_id_right);
         igDockBuilderDockWindow("Memory Viewer (CPU Bus)", dock_id_right);
         igDockBuilderDockWindow("Debug Controls", dock_id_left); // Add debug controls to left panel too
+        igDockBuilderDockWindow("Profiler", dock_id_down); // Add profiler to right panel too
 
         // Make status bar non-interactive for docking/resizing
         ImGuiDockNode* status_node = igDockBuilderGetNode(dock_id_statusbar);
@@ -1487,17 +1711,20 @@ void UI_Draw(NES* nes) {
     igEnd(); // End of "cEMU_MainHost"
 
     // --- Draw all dockable windows ---
-    if (ui_showGameScreen) UI_GameScreenWindow(nes); // Must be called for docking to work, even if hidden by user later
+    // Individual window drawing functions are now profiled internally
+    if (ui_showGameScreen) UI_GameScreenWindow(nes); 
     if (ui_showCpuWindow) UI_CpuWindow(nes);
-    //if (ui_showPpuViewer) UI_PPUViewer(nes);
+    if (ui_showPpuViewer) UI_PPUViewer(nes); // Ensure this is also profiled if uncommented
     if (ui_showLog) UI_LogWindow();
     if (ui_showMemoryViewer) UI_MemoryViewer(nes);
     if (ui_showDisassembler) UI_DrawDisassembler(nes);
     if (ui_showToolbar) UI_DebugToolbar(nes); // Debug Controls window
+    if (ui_showProfilerWindow) Profiler_DrawWindow(&ui_profiler_instance, &ui_showProfilerWindow); // Draw Profiler
     
     UI_DrawStatusBar(nes);
 
     // --- Modals and non-docked utility windows ---
+    // These are also profiled internally now
     if (ui_showSettingsWindow) UI_SettingsWindow(nes);
     if (ui_showAboutWindow) UI_DrawAboutWindow();
     if (ui_showCreditsWindow) UI_DrawCreditsWindow();
@@ -1508,9 +1735,14 @@ void UI_Draw(NES* nes) {
 bool ui_quit_requested = false; 
 
 void UI_Update(NES* nes) {
+    Profiler_BeginFrame(&ui_profiler_instance); // Profiler: Begin Frame
+
+    int prof_event_loop = Profiler_BeginSection(&ui_profiler_instance, "EventLoop");
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
+        int prof_event_process = Profiler_BeginSection(&ui_profiler_instance, "ImGui_ProcessEvent");
         ImGui_ImplSDL3_ProcessEvent(&e); 
+        Profiler_EndSection(&ui_profiler_instance, prof_event_process);
 
         if (e.type == SDL_EVENT_QUIT) {
             ui_quit_requested = true;
@@ -1545,6 +1777,7 @@ void UI_Update(NES* nes) {
             UI_HandleInputEvent(&e);
         }
     }
+    Profiler_EndSection(&ui_profiler_instance, prof_event_loop);
 
     if (ui_quit_requested) { 
         UI_Shutdown(); // Shutdown is called by main application loop before exit
@@ -1552,80 +1785,95 @@ void UI_Update(NES* nes) {
         return; 
     }
 
+    int section_imgui_newframe = Profiler_BeginSection(&ui_profiler_instance, "ImGui_NewFrame");
     ImGui_ImplSDLGPU3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     igNewFrame();
+    Profiler_EndSection(&ui_profiler_instance, section_imgui_newframe);
 
     if (nes) { 
+        int prof_nes_setcontroller = Profiler_BeginSection(&ui_profiler_instance, "NES_SetController");
         NES_SetController(nes, 0, nes_input_state[0]);
         NES_SetController(nes, 1, nes_input_state[1]);
+        Profiler_EndSection(&ui_profiler_instance, prof_nes_setcontroller);
 
         if(!ui_paused) {
+            int section_nes_step = Profiler_BeginSection(&ui_profiler_instance, "NES_StepFrame");
             NES_StepFrame(nes); 
+            Profiler_EndSection(&ui_profiler_instance, section_nes_step);
         }
     }
 
     // igShowDemoWindow(NULL); // Uncomment for ImGui debugging
-
+    int section_ui_draw = Profiler_BeginSection(&ui_profiler_instance, "UI_Draw");
     UI_Draw(nes); 
+    Profiler_EndSection(&ui_profiler_instance, section_ui_draw);
 
-    ImPlot_ShowDemoWindow(NULL); // Uncomment for ImPlot debugging
+    // ImPlot_ShowDemoWindow(NULL); // Uncomment for ImPlot debugging
 
     // Rendering with SDL_gpu
+    int section_imgui_render = Profiler_BeginSection(&ui_profiler_instance, "ImGui_Render");
     igRender();
+    Profiler_EndSection(&ui_profiler_instance, section_imgui_render);
+
     ImDrawData* draw_data = igGetDrawData();
     const bool is_minimized = (draw_data->DisplaySize.x <= 0.0f || draw_data->DisplaySize.y <= 0.0f);
 
     SDL_GPUCommandBuffer* command_buffer = SDL_AcquireGPUCommandBuffer(gpu_device); 
 
-    SDL_GPUTexture* swapchain_texture = NULL; // Must be initialized to NULL
-    SDL_AcquireGPUSwapchainTexture(command_buffer, window, &swapchain_texture, NULL, NULL); 
+    if (command_buffer) {
+        SDL_GPUTexture* swapchain_texture = NULL; // Must be initialized to NULL
+        SDL_AcquireGPUSwapchainTexture(command_buffer, window, &swapchain_texture, NULL, NULL); 
 
-    if (swapchain_texture != NULL && !is_minimized) 
-    {
-        Imgui_ImplSDLGPU3_PrepareDrawData(draw_data, command_buffer);
-        SDL_GPUColorTargetInfo target_info = {0}; // Important to zero-initialize
-        target_info.texture = swapchain_texture;
-        target_info.clear_color.r = clear_color.x; // Uses global clear_color set by theme
-        target_info.clear_color.r = clear_color.x; // Uses global clear_color set by theme
-        target_info.clear_color.g = clear_color.y;
-        target_info.clear_color.b = clear_color.z;
-        target_info.clear_color.a = clear_color.w;
-        target_info.load_op = SDL_GPU_LOADOP_CLEAR;
-        target_info.store_op = SDL_GPU_STOREOP_STORE;
+        if (swapchain_texture != NULL && !is_minimized) 
+        {
+            int section_sdl_render = Profiler_BeginSection(&ui_profiler_instance, "SDL_GPU_RenderPass");
+            Imgui_ImplSDLGPU3_PrepareDrawData(draw_data, command_buffer);
+            SDL_GPUColorTargetInfo target_info = {0}; // Important to zero-initialize
+            target_info.texture = swapchain_texture;
+            target_info.clear_color.r = clear_color.x; // Uses global clear_color set by theme
+            target_info.clear_color.g = clear_color.y;
+            target_info.clear_color.b = clear_color.z;
+            target_info.clear_color.a = clear_color.w;
+            target_info.load_op = SDL_GPU_LOADOP_CLEAR;
+            target_info.store_op = SDL_GPU_STOREOP_STORE;
 
-        target_info.mip_level = 0;
-        target_info.layer_or_depth_plane = 0;
-        target_info.cycle = false;
-        target_info.resolve_texture = NULL;
-        target_info.resolve_mip_level = 0;
-        target_info.resolve_layer = 0;
-        target_info.cycle_resolve_texture = false;
-        target_info.padding1 = 0;
-        target_info.padding2 = 0;
-        // mip_level, layer_or_depth_plane, cycle, resolve_texture etc. are 0/false/NULL by default from zero-init
+            target_info.mip_level = 0;
+            target_info.layer_or_depth_plane = 0;
+            target_info.cycle = false;
+            target_info.resolve_texture = NULL;
+            target_info.resolve_mip_level = 0;
+            target_info.resolve_layer = 0;
+            target_info.cycle_resolve_texture = false;
+            target_info.padding1 = 0;
+            target_info.padding2 = 0;
+            // mip_level, layer_or_depth_plane, cycle, resolve_texture etc. are 0/false/NULL by default from zero-init
 
-        SDL_GPURenderPass* render_pass = SDL_BeginGPURenderPass(command_buffer, &target_info, 1, NULL);
-        if (render_pass) { // Check if render pass began successfully
-            ImGui_ImplSDLGPU3_RenderDrawData(draw_data, command_buffer, render_pass, NULL);
-            SDL_EndGPURenderPass(render_pass);
-        } else {
-            UI_Log("Failed to begin GPU render pass: %s", SDL_GetError());
+            SDL_GPURenderPass* render_pass = SDL_BeginGPURenderPass(command_buffer, &target_info, 1, NULL);
+            if (render_pass) { // Check if render pass began successfully
+                ImGui_ImplSDLGPU3_RenderDrawData(draw_data, command_buffer, render_pass, NULL);
+                SDL_EndGPURenderPass(render_pass);
+            } else {
+                UI_Log("Failed to begin GPU render pass: %s", SDL_GetError());
+            }
+            Profiler_EndSection(&ui_profiler_instance, section_sdl_render);
+        } else if (is_minimized) {
+            // Window is minimized, nothing to render to swapchain.
+            // SDL_gpu handles this internally, but good to be aware.
+        } else if (swapchain_texture == NULL) {
+            //UI_Log("Failed to acquire swapchain texture: %s", SDL_GetError());
         }
-    } else if (is_minimized) {
-        // Window is minimized, nothing to render to swapchain.
-        // SDL_gpu handles this internally, but good to be aware.
-    } else if (swapchain_texture == NULL) {
-         UI_Log("Failed to acquire swapchain texture: %s", SDL_GetError());
+    
+        SDL_SubmitGPUCommandBuffer(command_buffer); // This also presents the frame
     }
-
-    SDL_SubmitGPUCommandBuffer(command_buffer); // This also presents the frame
 
     // Update and Render additional Platform Windows (for multi-viewport support)
     if (ioptr->ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
         igUpdatePlatformWindows();
         igRenderPlatformWindowsDefault(NULL,NULL); // This should work with SDL_gpu backend
     }
+
+    Profiler_EndFrame(&ui_profiler_instance); // Profiler: End Frame
 }
 
 
@@ -1637,6 +1885,7 @@ uint8_t UI_PollInput(int controller) {
 void UI_Shutdown() {
     // REFACTOR-NOTE: Save recent ROMs list, window positions/docking layout (imgui.ini handles docking if enabled).
     // Consider saving settings (theme, volume) to a config file.
+    Profiler_Shutdown(&ui_profiler_instance); // Shutdown Profiler
 
     DEBUG_INFO("Shutting down UI");
 

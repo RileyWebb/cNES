@@ -1,6 +1,6 @@
 // cimgui_markdown.c
 #define CIMGUI_DEFINE_ENUMS_AND_STRUCTS
-#include "cimgui_markdown.h"
+#include "ui/cimgui_markdown.h"
 #include "cimgui.h"
 #include <string.h> // For strlen, strncmp if needed (though mostly pointer arithmetic is used)
 #include <stdio.h>  // For snprintf in tooltips

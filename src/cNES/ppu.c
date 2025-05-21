@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <malloc.h>
 #include <math.h> // For fabsf in scalar color emphasis, or general float math
 
 
@@ -26,18 +27,6 @@
 
 #ifdef PPU_USE_SIMD_COLOR_EMPHASIS
 #include <emmintrin.h> // SSE2 intrinsics
-#endif
-
-// For aligned_alloc (C11)
-#if __STDC_VERSION__ >= 201112L
-#include <stdlib.h> // For aligned_alloc
-#elif defined(_MSC_VER)
-#include <malloc.h> // For _aligned_malloc on MSVC
-#else
-// Fallback or POSIX specific for aligned_alloc if needed, e.g. posix_memalign
-// For simplicity, this example might not compile without C11 aligned_alloc or MSVC _aligned_malloc
-// if PPU_USE_SIMD_COLOR_EMPHASIS (or other SIMD requiring alignment) is on.
-// A simple unaligned calloc is used if no aligned allocator is obvious.
 #endif
 
 #include "debug.h"    // Assuming debug logging is desired
@@ -376,9 +365,11 @@ PPU *PPU_Create(NES *nes) {
 
     // Allocate framebuffer with alignment for potential SIMD operations
     size_t framebuffer_size = PPU_FRAMEBUFFER_WIDTH * PPU_FRAMEBUFFER_HEIGHT * sizeof(uint32_t);
-#if __STDC_VERSION__ >= 201112L
-    ppu->framebuffer = aligned_alloc(16, framebuffer_size);
-#elif defined(_MSC_VER)
+
+#if defined(_MSC_VER)
+    #include <stdlib.h> // Ensure aligned_alloc is declared
+    ppu->framebuffer = _aligned_alloc(16, framebuffer_size);
+#elif __STDC_VERSION__ >= 201112L
     ppu->framebuffer = _aligned_malloc(framebuffer_size, 16);
 #else
     // Fallback: use regular calloc, alignment not guaranteed but often works for 16-bytes on modern systems.
@@ -568,7 +559,7 @@ inline void PPU_DoOAMDMA(PPU *ppu, const uint8_t *dma_page_data) {
     // For simplicity, we don't modify ppu->oam_addr here.
 }
 
-inline void PPU_TriggerNMI(PPU *ppu) { // Usually called by PPU_Step logic
+void PPU_TriggerNMI(PPU *ppu) { // Usually called by PPU_Step logic
     if (ppu->nmi_output && ppu->nmi_occured) {
         ppu->nmi_interrupt_line = true;
     }

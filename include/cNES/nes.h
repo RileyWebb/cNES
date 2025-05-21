@@ -7,15 +7,20 @@
 typedef struct CPU CPU;
 typedef struct PPU PPU;
 typedef struct BUS BUS;
+typedef struct ROM ROM;
+//typedef struct Profiler Profiler;
 
 typedef struct NES {
     CPU* cpu; // Pointer to the CPU
     PPU* ppu; // Pointer to the PPU
     BUS* bus; // Pointer to the BUS
+    ROM* rom; // Pointer to the ROM
 
     uint8_t controllers[2]; // Two NES controllers
     uint8_t controller_strobe; // Strobe flag for controllers
     uint8_t controller_shift[2]; // Shift registers for controllers
+
+    //Profiler *profiler;
 } NES;
 
 NES *NES_Create();
