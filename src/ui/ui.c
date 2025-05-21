@@ -68,8 +68,6 @@ bool ui_showAboutWindow = false;
 bool ui_showCreditsWindow = false;
 bool ui_showLicenceWindow = false;
 
-static Profiler ui_profiler_instance; // Added Profiler instance
-
 static bool ui_first_frame = true; // Flag for applying default docking layout
 
 // --- PPU Viewer SDL_gpu Resources ---
@@ -927,7 +925,7 @@ void UI_Init() {
     strncpy(ui_currentRomName, "No ROM Loaded", sizeof(ui_currentRomName) -1);
     ui_currentRomName[sizeof(ui_currentRomName)-1] = '\0';
 
-    Profiler_Init(&ui_profiler_instance); // Initialize Profiler
+    Profiler_Init(); // Initialize Profiler
 
     UI_Log("cEMU Initialized with SDL3_gpu. Welcome!");
 }
@@ -1416,13 +1414,13 @@ static ImU32 GetColorForString(const char* str) {
 }
 
 
-void UI_Profiler_DrawWindow(Profiler* profiler, bool* p_open) {
-    if (!profiler || !p_open || !(*p_open)) {
+void UI_Profiler_DrawWindow(Profiler* profiler) {
+    if (!profiler || !ui_showProfilerWindow) {
         return;
     }
 
     igSetNextWindowSize((ImVec2){500, 440}, ImGuiCond_FirstUseEver); // Increased height slightly for new info
-    if (igBegin("Profiler", p_open, ImGuiWindowFlags_None)) {
+    if (igBegin("Profiler", &ui_showProfilerWindow, ImGuiWindowFlags_None)) {
         igText("FPS: %.1f", profiler->current_fps);
         igSameLine(0, 20);
         igText("Frame Time: %.2f ms (Avg: %.2f ms, Max: %.2f ms)",
@@ -1589,7 +1587,7 @@ void UI_DrawStatusBar(NES* nes)
 
     if (igBegin("Status Bar", NULL, flags))  {
         // FPS calculation is now handled by the profiler
-        ui_fps = Profiler_GetFPS(&ui_profiler_instance);
+        ui_fps = Profiler_GetFPS();
         
         igText("FPS: %.1f | ROM: %s | %s", ui_fps, ui_currentRomName, ui_paused ? "Paused" : "Running");
         
@@ -1691,7 +1689,7 @@ void UI_Draw(NES* nes) {
     if (ui_showMemoryViewer) UI_MemoryViewer(nes);
     if (ui_showDisassembler) UI_DrawDisassembler(nes);
     if (ui_showToolbar) UI_DebugToolbar(nes); // Debug Controls window
-    if (ui_showProfilerWindow) UI_Profiler_DrawWindow(&ui_profiler_instance, &ui_showProfilerWindow); // Draw Profiler
+    if (ui_showProfilerWindow) UI_Profiler_DrawWindow(Profiler_GetInstance()); // Draw Profiler
     
     UI_DrawStatusBar(nes);
 
@@ -1706,7 +1704,7 @@ void UI_Draw(NES* nes) {
 bool ui_quit_requested = false; 
 
 void UI_Update(NES* nes) {
-    Profiler_BeginFrame(&ui_profiler_instance); // Profiler: Begin Frame
+    Profiler_BeginFrame(); // Profiler: Begin Frame
 
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
@@ -1761,23 +1759,23 @@ void UI_Update(NES* nes) {
         NES_SetController(nes, 1, nes_input_state[1]);
 
         if(!ui_paused) {
-            int section_nes_step = Profiler_BeginSection(&ui_profiler_instance, "NES_StepFrame");
+            int section_nes_step = Profiler_BeginSection("NES_StepFrame");
             NES_StepFrame(nes); 
-            Profiler_EndSection(&ui_profiler_instance, section_nes_step);
+            Profiler_EndSection(section_nes_step);
         }
     }
 
     // igShowDemoWindow(NULL); // Uncomment for ImGui debugging
-    int section_ui_draw = Profiler_BeginSection(&ui_profiler_instance, "UI_Draw");
+    int section_ui_draw = Profiler_BeginSection("UI_Draw");
     UI_Draw(nes); 
-    Profiler_EndSection(&ui_profiler_instance, section_ui_draw);
+    Profiler_EndSection(section_ui_draw);
 
     // ImPlot_ShowDemoWindow(NULL); // Uncomment for ImPlot debugging
 
     // Rendering with SDL_gpu
-    int section_imgui_render = Profiler_BeginSection(&ui_profiler_instance, "ImGui_Render");
+    int section_imgui_render = Profiler_BeginSection("ImGui_Render");
     igRender();
-    Profiler_EndSection(&ui_profiler_instance, section_imgui_render);
+    Profiler_EndSection(section_imgui_render);
 
     ImDrawData* draw_data = igGetDrawData();
     const bool is_minimized = (draw_data->DisplaySize.x <= 0.0f || draw_data->DisplaySize.y <= 0.0f);
@@ -1790,7 +1788,7 @@ void UI_Update(NES* nes) {
 
         if (swapchain_texture != NULL && !is_minimized) 
         {
-            int section_sdl_render = Profiler_BeginSection(&ui_profiler_instance, "SDL_GPU_RenderPass");
+            int section_sdl_render = Profiler_BeginSection("SDL_GPU_RenderPass");
             Imgui_ImplSDLGPU3_PrepareDrawData(draw_data, command_buffer);
             SDL_GPUColorTargetInfo target_info = {0}; // Important to zero-initialize
             target_info.texture = swapchain_texture;
@@ -1819,7 +1817,7 @@ void UI_Update(NES* nes) {
             } else {
                 UI_Log("Failed to begin GPU render pass: %s", SDL_GetError());
             }
-            Profiler_EndSection(&ui_profiler_instance, section_sdl_render);
+            Profiler_EndSection(section_sdl_render);
         } else if (is_minimized) {
             // Window is minimized, nothing to render to swapchain.
             // SDL_gpu handles this internally, but good to be aware.
@@ -1836,7 +1834,7 @@ void UI_Update(NES* nes) {
         igRenderPlatformWindowsDefault(NULL,NULL); // This should work with SDL_gpu backend
     }
 
-    Profiler_EndFrame(&ui_profiler_instance); // Profiler: End Frame
+    Profiler_EndFrame(); // Profiler: End Frame
 }
 
 
@@ -1848,7 +1846,7 @@ uint8_t UI_PollInput(int controller) {
 void UI_Shutdown() {
     // REFACTOR-NOTE: Save recent ROMs list, window positions/docking layout (imgui.ini handles docking if enabled).
     // Consider saving settings (theme, volume) to a config file.
-    Profiler_Shutdown(&ui_profiler_instance); // Shutdown Profiler
+    Profiler_Shutdown(); // Shutdown Profiler
 
     DEBUG_INFO("Shutting down UI");
 
