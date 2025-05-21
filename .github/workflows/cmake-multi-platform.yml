@@ -52,11 +52,10 @@ jobs:
             c_compiler: cl
 
     steps:
-    - uses: MunifTanjim/luver-action@v1
+    - uses: ilammy/msvc-dev-cmd@v1
+    - uses: leafo/gh-actions-lua@v11
       with:
-        lua_versions: 5.1.5 5.4.3
-        luajit_versions: 5.1.5:2.1.0-beta3
-        luarocks_versions: 5.1.5:3.7.0 5.4.3:3.8.0  
+        luaVersion: "luajit-2.1.0-beta3"
     - uses: actions/checkout@v4
       with:
         submodules: 'recursive'
