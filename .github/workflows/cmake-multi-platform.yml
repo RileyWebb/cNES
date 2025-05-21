@@ -52,6 +52,9 @@ jobs:
             c_compiler: cl
 
     steps:
+    - uses: xpol/setup-lua@v1
+      with:
+        lua-version: "luajit-2.0.5"
     - uses: actions/checkout@v4
       with:
         submodules: 'recursive'

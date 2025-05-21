@@ -1,5 +1,4 @@
 add_subdirectory(sdl EXCLUDE_FROM_ALL)
-add_subdirectory(glew EXCLUDE_FROM_ALL)
 #add_subdirectory(libuv EXCLUDE_FROM_ALL)
 #add_subdirectory(zip EXCLUDE_FROM_ALL)
 #add_subdirectory(protobuf)
