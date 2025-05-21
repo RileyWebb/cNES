@@ -54,7 +54,7 @@ jobs:
     steps:
     - uses: xpol/setup-lua@v0.3
       with:
-        lua-version: "luajit-2.1.0"
+        lua-version: "luajit-2.1.0-beta3"
     - uses: actions/checkout@v4
       with:
         submodules: 'recursive'
