@@ -15,6 +15,8 @@
 #include "debug.h"
 #include "profiler.h"
 
+#include "IconsMaterialSymbols.h"
+
 #include "cNES/nes.h"
 #include "cNES/cpu.h"
 #include "cNES/ppu.h"
@@ -69,6 +71,7 @@ bool ui_showCreditsWindow = false;
 bool ui_showLicenceWindow = false;
 
 static bool ui_first_frame = true; // Flag for applying default docking layout
+static bool ui_fonts_loaded = false; // Flag for one-time font loading attempt
 
 // --- PPU Viewer SDL_gpu Resources ---
 static SDL_GPUTexture* pt_texture0 = NULL;
@@ -835,18 +838,44 @@ void UI_ApplyTheme(UI_Theme theme) {
     style->IndentSpacing = 20.0f;
     style->ScrollbarSize = 15.0f;
     style->GrabMinSize = 12.0f;
-
     // REFACTOR-NOTE: Font loading. If you have a preferred font, load it here.
-    // Example:
-    // char* fontPath = SDL_GetBasePath(); // Or a specific path
-    // if (fontPath) {
-    //     char fullFontPath[512];
-    //     snprintf(fullFontPath, sizeof(fullFontPath), "%smyfont.ttf", fontPath); // Assuming font in base path
-    //     SDL_free(fontPath);
-    //     ioptr->Fonts->AddFontFromFileTTF(fullFontPath, 16.0f, NULL, NULL);
-    //     // ImGui_ImplSDLGPU3_DestroyFontsTexture(); // If fonts are changed after init
-    //     // ImGui_ImplSDLGPU3_CreateFontsTexture();
-    // }
+    // Example using cimgui:
+    // ioptr is the global ImGuiIO* (obtained via igGetIO())
+    if (ioptr && ioptr->Fonts) { // Ensure ImGuiIO and Fonts atlas are available
+        if (!ui_fonts_loaded) {
+            const char* font_path = "test.ttf";
+            // Check if font file exists before attempting to load it.
+            FILE* font_file = fopen(font_path, "rb");
+            if (font_file) {
+                fclose(font_file);
+
+                // Add font to the font atlas using cimgui.
+                // The ImFont* returned can be saved if you need to switch fonts using igPushFont/igPopFont.
+                ImFontConfig *cfg = ImFontConfig_ImFontConfig();
+                ImFontAtlas_Clear(ioptr->Fonts); // Clear existing fonts
+                ImFontAtlas_AddFontFromFileTTF(ioptr->Fonts, font_path, 16.0f, cfg, ImFontAtlas_GetGlyphRangesDefault(ioptr->Fonts));
+                static const ImWchar icon_ranges[] = { ICON_MIN_MS, ICON_MAX_MS, 0 };
+                ImFontAtlas_AddFontFromFileTTF(ioptr->Fonts, "data/fonts/MaterialSymbolsRounded.ttf", 16.0f, cfg, icon_ranges);
+            
+                // If fonts are added after the graphics backend has already created the font texture
+                // (e.g., after ImGui_ImplSDLGPU3_Init or if changing fonts dynamically),
+                // the font texture atlas must be rebuilt.
+                // In this codebase, UI_ApplyTheme is called after ImGui_ImplSDLGPU3_Init,
+                // so a rebuild would be necessary for a newly added font to appear.
+                // Consider loading fonts once during UI_Init before ImGui_ImplSDLGPU3_Init,
+                // or use a flag to ensure this rebuild happens only when fonts actually change.
+                // Example rebuild for SDL_gpu backend (using global gpu_device):
+                if (gpu_device) {
+                    ImGui_ImplSDLGPU3_DestroyFontsTexture();
+                    ImGui_ImplSDLGPU3_CreateFontsTexture();
+                }
+            } else {
+                // UI_Log("Font file '%s' not found. Using default ImGui font.", font_path); // Optional: Log font not found
+            }
+        
+            ui_fonts_loaded = true; // Mark that font loading has been attempted (successfully or not) to prevent future attempts.
+        }
+    }
 }
 
 
@@ -1204,7 +1233,7 @@ void UI_DrawMainMenuBar(NES* nes) {
         UI_DrawFileMenu(nes);
         if (igBeginMenu("Emulation", true)) {
             bool rom_loaded = (nes != NULL && strlen(ui_currentRomName) > 0 && strcmp(ui_currentRomName, "No ROM Loaded") != 0 && strcmp(ui_currentRomName, "Failed to load ROM") != 0);
-            if (igMenuItem_Bool(ui_paused ? "Resume" : "Pause", "F6", false, rom_loaded)) UI_TogglePause(nes);
+            if (igMenuItem_Bool(ui_paused ? "Resume " ICON_MS_PLAY_ARROW : "Pause", "F6", false, rom_loaded)) UI_TogglePause(nes);
             if (igMenuItem_Bool("Reset", "F5", false, rom_loaded)) UI_Reset(nes);
             if (igMenuItem_Bool("Step CPU Instruction", "F7", false, rom_loaded && ui_paused)) { if(nes && nes->cpu) NES_Step(nes); }
             if (igMenuItem_Bool("Step Frame", "F8", false, rom_loaded && ui_paused)) UI_StepFrame(nes);
@@ -1212,14 +1241,14 @@ void UI_DrawMainMenuBar(NES* nes) {
             igEndMenu();
         }
         if (igBeginMenu("View", true)) {
-            igMenuItem_Bool("Game Screen", NULL, &ui_showGameScreen, true); // Toggle visibility of game screen window
-            igMenuItem_Bool("CPU Registers", NULL, &ui_showCpuWindow, true);
-            igMenuItem_Bool("PPU Viewer", NULL, &ui_showPpuViewer, true);
-            igMenuItem_Bool("Memory Viewer", NULL, &ui_showMemoryViewer, true);
-            igMenuItem_Bool("Disassembler", NULL, &ui_showDisassembler, true);
-            igMenuItem_Bool("Log Window", NULL, &ui_showLog, true);
-            igMenuItem_Bool("Debug Controls", NULL, &ui_showToolbar, true); // Matches window title
-            igMenuItem_Bool("Profiler", NULL, &ui_showProfilerWindow, true); // Added Profiler toggle
+            if (igMenuItem_Bool("Game Screen", NULL, ui_showGameScreen, true)) ui_showGameScreen = !ui_showGameScreen;
+            if (igMenuItem_Bool("CPU Registers", NULL, ui_showCpuWindow, true)) ui_showCpuWindow = !ui_showCpuWindow;
+            if (igMenuItem_Bool("PPU Viewer", NULL, ui_showPpuViewer, true)) ui_showPpuViewer = !ui_showPpuViewer;
+            if (igMenuItem_Bool("Memory Viewer", NULL, ui_showMemoryViewer, true)) ui_showMemoryViewer = !ui_showMemoryViewer;
+            if (igMenuItem_Bool("Disassembler", NULL, ui_showDisassembler, true)) ui_showDisassembler = !ui_showDisassembler;
+            if (igMenuItem_Bool("Log Window", NULL, ui_showLog, true)) ui_showLog = !ui_showLog;
+            if (igMenuItem_Bool("Debug Controls", NULL, ui_showToolbar, true)) ui_showToolbar = !ui_showToolbar;
+            if (igMenuItem_Bool("Profiler", NULL, ui_showProfilerWindow, true)) ui_showProfilerWindow = !ui_showProfilerWindow;
             igSeparator();
             if (igMenuItem_Bool("Toggle Fullscreen", "F11", ui_sdl_fullscreen, true)) UI_ToggleFullscreen();
             igEndMenu();
@@ -1657,6 +1686,7 @@ void UI_Draw(NES* nes) {
         igDockBuilderDockWindow("Disassembler", dock_id_left); 
         igDockBuilderDockWindow("PPU Viewer", dock_id_right);
         igDockBuilderDockWindow("Memory Viewer (CPU Bus)", dock_id_right);
+        igDockBuilderDockWindow("Profiler", dock_id_right);
         igDockBuilderDockWindow("Debug Controls", dock_id_left); // Add debug controls to left panel too
 
         // Make status bar non-interactive for docking/resizing
@@ -1698,6 +1728,10 @@ void UI_Draw(NES* nes) {
     if (ui_showAboutWindow) UI_DrawAboutWindow();
     if (ui_showCreditsWindow) UI_DrawCreditsWindow();
     if (ui_showLicenceWindow) UI_DrawLicenceWindow();
+
+    // For debugging ImGui itself
+    igShowDemoWindow(NULL); 
+    // ImPlot_ShowDemoWindow(NULL); // For ImPlot debugging
 }
 
 

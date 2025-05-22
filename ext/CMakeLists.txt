@@ -28,6 +28,7 @@ target_include_directories(imgui PUBLIC cimgui/imgui/backends)
 target_include_directories(imgui PUBLIC sdl/include)
 
 if (WIN32)
+    target_link_libraries(imgui PRIVATE imm32)
     #target_compile_definitions(imgui PUBLIC IMGUI_IMPL_API="extern \"C\" __declspec(dllexport)")
 else (WIN32)
     #target_compile_definitions(imgui PUBLIC IMGUI_IMPL_API="extern \"C\"")
@@ -36,7 +37,7 @@ endif (WIN32)
 target_compile_definitions(imgui PUBLIC IMGUI_USE_WCHAR32)
 target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS=1)
 
-target_link_libraries(imgui PRIVATE imm32)
+
 target_link_libraries(imgui PUBLIC SDL3-shared)
 
 set_target_properties(imgui PROPERTIES PREFIX "")
@@ -56,7 +57,7 @@ if(rendbk_position EQUAL -1 OR platbk_position EQUAL -1)
     cmake_path(REMOVE_EXTENSION C_COMP)
     #get includes string
     execute_process(
-    COMMAND luajit generator.lua ${C_COMP} "internal noimstrv" SDL3 SDLGPU3 "-I${CMAKE_CURRENT_SOURCE_DIR}/sdl/include"
+    COMMAND luajit generator.lua ${C_COMP} "internal noimstrv" sdl3 sdlgpu3 "-I${CMAKE_CURRENT_SOURCE_DIR}/sdl/include"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/cimgui/generator
     ERROR_VARIABLE error_command
     RESULT_VARIABLE build_command_result
@@ -84,12 +85,15 @@ target_include_directories(cimgui PUBLIC cimgui/imgui/backends/)
 
 if (WIN32)
     target_compile_definitions(cimgui PUBLIC IMGUI_IMPL_API=extern\t\"C\"\t__declspec\(dllexport\))
+    target_link_libraries(imgui PRIVATE imm32)
 else (WIN32)
     target_compile_definitions(cimgui PUBLIC IMGUI_IMPL_API=extern\t\"C\"\t)
 endif (WIN32)
 
+target_compile_definitions(cimgui PUBLIC IMGUI_USE_WCHAR32)
+
 target_link_libraries(cimgui PUBLIC imgui)
-target_link_libraries(cimgui PRIVATE imm32 stdc++ m)
+target_link_libraries(cimgui PRIVATE stdc++ m)
 
 set_target_properties(cimgui PROPERTIES PREFIX "")
 
