@@ -20,3 +20,4 @@ https://github.com/ScriptTiger/LuaJIT-For-Windows
 - refactor immarkdown
 - add utf8 support and icons
 - Fix dissasembler
+- profiler settings menu and fps overlay (with graph option)

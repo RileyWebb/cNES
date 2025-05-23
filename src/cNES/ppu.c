@@ -366,10 +366,10 @@ PPU *PPU_Create(NES *nes) {
     // Allocate framebuffer with alignment for potential SIMD operations
     size_t framebuffer_size = PPU_FRAMEBUFFER_WIDTH * PPU_FRAMEBUFFER_HEIGHT * sizeof(uint32_t);
 
-#if defined(_MSC_VER)
+#if __STDC_VERSION__ >= 201112L
     #include <stdlib.h> // Ensure aligned_alloc is declared
-    ppu->framebuffer = _aligned_alloc(16, framebuffer_size);
-#elif __STDC_VERSION__ >= 201112L
+    ppu->framebuffer = aligned_alloc(16, framebuffer_size);
+#elif defined(_MSC_VER)
     ppu->framebuffer = _aligned_malloc(framebuffer_size, 16);
 #else
     // Fallback: use regular calloc, alignment not guaranteed but often works for 16-bytes on modern systems.
