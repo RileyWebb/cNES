@@ -12,12 +12,12 @@ include_directories(include)
 add_subdirectory(ext)
 
 #cNES
-file(GLOB SOURCES src/*.c src/cNES/*.c src/ui/*.c)
 add_executable(cNES 
         src/main.c 
         src/debug.c 
         src/profiler.c 
         src/ui/ui.c 
+        src/ui/ui_style.c
         src/ui/cimgui_markdown.c 
         src/cNES/bus.c 
         src/cNES/cpu.c 
@@ -25,6 +25,7 @@ add_executable(cNES
         src/cNES/nes.c 
         src/cNES/ppu_sdlgpu.c 
         src/cNES/ppu.c
+        src/cNES/rom.c
 )
 
 if (WIN32)
