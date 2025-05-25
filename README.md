@@ -4,6 +4,7 @@
 
 ### Windows (MinGW)
 https://github.com/ScriptTiger/LuaJIT-For-Windows
+vulkan sdl
 
 - use sdlgpu
 - refactor cpu to use lookup table (not switch statement)
@@ -20,3 +21,4 @@ https://github.com/ScriptTiger/LuaJIT-For-Windows
 - refactor immarkdown
 - add utf8 support and icons
 - Fix dissasembler
+https://github.com/libsdl-org/SDL_shadercross
