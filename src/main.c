@@ -10,6 +10,7 @@
 #include "cNES/ppu.h"
 #include "cNES/bus.h"
 #include "cNES/nes.h"
+#include "cNES/rom.h"
 
 int main(int argc, char **argv)
 {
@@ -22,7 +23,7 @@ int main(int argc, char **argv)
 
     NES* nes = NES_Create();
 
-    NES_Load("/home/riley/Downloads/Super Mario Bros..nes", nes);
+    NES_Load(nes, ROM_LoadFile("/home/riley/Downloads/Super Mario Bros..nes"));
     //NES_Load("nestest.nes", nes);
     //NES_Reset(nes);
 

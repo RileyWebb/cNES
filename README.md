@@ -22,3 +22,4 @@ vulkan sdl
 - add utf8 support and icons
 - Fix dissasembler
 https://github.com/libsdl-org/SDL_shadercross
+- profiler settings menu and fps overlay (with graph option)

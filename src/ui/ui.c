@@ -21,6 +21,7 @@
 #include "cNES/cpu.h"
 #include "cNES/ppu.h"
 #include "cNES/bus.h"
+#include "cNES/rom.h"
 #include "cNES/debugging.h"
 #include "cNES/version.h"
 
@@ -32,16 +33,13 @@
 SDL_Window *window;
 SDL_GPUDevice* gpu_device;
 ImGuiIO* ioptr;
-ImVec4 clear_color; // Clear color for the swapchain
 
 // --- UI State ---
 static bool ui_paused = false;
 static char ui_romPath[256] = "";
-static char ui_currentRomName[256] = "No ROM Loaded";
 static char ui_logBuffer[8192] = ""; // REFACTOR-NOTE: Increased buffer size. Consider a circular buffer for very extensive logging.
 static int ui_logLen = 0;
 static float ui_fps = 0.0f;
-static UI_Theme current_ui_theme = UI_THEME_DARK;
 static float ui_master_volume = 0.8f;
 static bool ui_sdl_fullscreen = false;
 
@@ -71,7 +69,6 @@ bool ui_showCreditsWindow = false;
 bool ui_showLicenceWindow = false;
 
 static bool ui_first_frame = true; // Flag for applying default docking layout
-static bool ui_fonts_loaded = false; // Flag for one-time font loading attempt
 
 // --- PPU Viewer SDL_gpu Resources ---
 static SDL_GPUTexture* pt_texture0 = NULL;
@@ -166,20 +163,13 @@ static void UI_AddRecentRom(const char* path) {
 }
 
 void UI_LoadRom(NES* nes, const char* path) {
-    if (NES_Load(path, nes) == 0) {
-        UI_Log("Successfully loaded ROM: %s", path);
-        const char* filename = strrchr(path, '/');
-        if (!filename) filename = strrchr(path, '\\');
-        if (filename) strncpy(ui_currentRomName, filename + 1, sizeof(ui_currentRomName) - 1);
-        else strncpy(ui_currentRomName, path, sizeof(ui_currentRomName) - 1);
-        ui_currentRomName[sizeof(ui_currentRomName) - 1] = '\0';
+    if (NES_Load(nes, ROM_LoadFile(path)) == 0) {
+        UI_Log("Loaded ROM: %s", path);
         NES_Reset(nes);
         UI_AddRecentRom(path);
     } else {
         UI_Log("Failed to load ROM: %s", path);
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "ROM Load Error", "Failed to load the specified ROM file.", window);
-        strncpy(ui_currentRomName, "Failed to load ROM", sizeof(ui_currentRomName) -1);
-        ui_currentRomName[sizeof(ui_currentRomName) - 1] = '\0';
     }
 }
 
@@ -221,6 +211,136 @@ static void UI_HandleInputEvent(const SDL_Event* e) {
         case SDLK_D:      nes_input_state[0] = pressed ? (nes_input_state[0] | 0x80) : (nes_input_state[0] & ~0x80); break; // Right
         // REFACTOR-NOTE: Add Player 2 controls if desired
         default: break;
+    }
+}
+
+
+UI_Theme ui_current_theme = UI_THEME_DARK;
+
+static bool ui_fonts_loaded = false; // Flag for one-time font loading attempt
+
+void UI_ApplyTheme(UI_Theme theme) {
+    ui_current_theme = theme;
+    ImGuiStyle* style = igGetStyle();
+    ImVec4* colors = style->Colors;
+
+    if (theme == UI_THEME_LIGHT) {
+        igStyleColorsLight(NULL);
+        colors[ImGuiCol_WindowBg] = (ImVec4){0.94f, 0.94f, 0.94f, 1.00f};
+        colors[ImGuiCol_FrameBg] = (ImVec4){1.00f, 1.00f, 1.00f, 1.00f};
+        colors[ImGuiCol_TitleBgActive] = (ImVec4){0.82f, 0.82f, 0.82f, 1.00f};
+        colors[ImGuiCol_MenuBarBg] = (ImVec4){0.86f, 0.86f, 0.86f, 1.00f};
+        colors[ImGuiCol_Header] = (ImVec4){0.90f, 0.90f, 0.90f, 1.00f};
+        colors[ImGuiCol_Button] = (ImVec4){0.80f, 0.80f, 0.80f, 1.00f};
+        colors[ImGuiCol_ButtonHovered] = (ImVec4){0.70f, 0.70f, 0.70f, 1.00f};
+        colors[ImGuiCol_ButtonActive] = (ImVec4){0.60f, 0.60f, 0.60f, 1.00f};
+        colors[ImGuiCol_CheckMark] = (ImVec4){0.26f, 0.59f, 0.98f, 1.00f}; // A more distinct checkmark for light theme
+        colors[ImGuiCol_SliderGrab] = (ImVec4){0.24f, 0.52f, 0.88f, 1.00f};
+        colors[ImGuiCol_SliderGrabActive] = (ImVec4){0.26f, 0.59f, 0.98f, 1.00f};
+    } else { // UI_THEME_DARK
+        igStyleColorsDark(NULL); // Start with default dark
+        colors[ImGuiCol_Text]                   = (ImVec4){1.00f, 1.00f, 1.00f, 1.00f};
+        colors[ImGuiCol_TextDisabled]           = (ImVec4){0.50f, 0.50f, 0.50f, 1.00f};
+        colors[ImGuiCol_WindowBg]               = (ImVec4){0.10f, 0.10f, 0.11f, 1.00f}; // Slightly bluish dark
+        colors[ImGuiCol_ChildBg]                = (ImVec4){0.12f, 0.12f, 0.13f, 1.00f};
+        colors[ImGuiCol_PopupBg]                = (ImVec4){0.08f, 0.08f, 0.09f, 0.94f};
+        colors[ImGuiCol_Border]                 = (ImVec4){0.43f, 0.43f, 0.50f, 0.50f};
+        colors[ImGuiCol_BorderShadow]           = (ImVec4){0.00f, 0.00f, 0.00f, 0.00f};
+        colors[ImGuiCol_FrameBg]                = (ImVec4){0.20f, 0.21f, 0.22f, 0.54f}; // Controls background
+        colors[ImGuiCol_FrameBgHovered]         = (ImVec4){0.25f, 0.26f, 0.28f, 0.78f};
+        colors[ImGuiCol_FrameBgActive]          = (ImVec4){0.30f, 0.31f, 0.33f, 1.00f};
+        colors[ImGuiCol_TitleBg]                = (ImVec4){0.08f, 0.08f, 0.09f, 1.00f}; // Window title bar
+        colors[ImGuiCol_TitleBgActive]          = (ImVec4){0.15f, 0.16f, 0.18f, 1.00f}; // Active window title bar
+        colors[ImGuiCol_TitleBgCollapsed]       = (ImVec4){0.08f, 0.08f, 0.09f, 0.75f};
+        colors[ImGuiCol_MenuBarBg]              = (ImVec4){0.14f, 0.15f, 0.16f, 1.00f};
+        colors[ImGuiCol_ScrollbarBg]            = (ImVec4){0.02f, 0.02f, 0.02f, 0.53f};
+        colors[ImGuiCol_ScrollbarGrab]          = (ImVec4){0.31f, 0.31f, 0.33f, 1.00f};
+        colors[ImGuiCol_ScrollbarGrabHovered]   = (ImVec4){0.41f, 0.41f, 0.43f, 1.00f};
+        colors[ImGuiCol_ScrollbarGrabActive]    = (ImVec4){0.51f, 0.51f, 0.53f, 1.00f};
+        colors[ImGuiCol_CheckMark]              = (ImVec4){0.50f, 0.75f, 0.25f, 1.00f}; // Greenish checkmark
+        colors[ImGuiCol_SliderGrab]             = (ImVec4){0.40f, 0.65f, 0.20f, 1.00f};
+        colors[ImGuiCol_SliderGrabActive]       = (ImVec4){0.50f, 0.75f, 0.25f, 1.00f};
+        colors[ImGuiCol_Button]                 = (ImVec4){0.22f, 0.40f, 0.18f, 0.60f}; // Darker Greenish buttons
+        colors[ImGuiCol_ButtonHovered]          = (ImVec4){0.28f, 0.50f, 0.24f, 1.00f};
+        colors[ImGuiCol_ButtonActive]           = (ImVec4){0.32f, 0.58f, 0.28f, 1.00f};
+        colors[ImGuiCol_Header]                 = (ImVec4){0.20f, 0.38f, 0.16f, 0.58f}; // Collapsing header
+        colors[ImGuiCol_HeaderHovered]          = (ImVec4){0.26f, 0.48f, 0.22f, 0.80f};
+        colors[ImGuiCol_HeaderActive]           = (ImVec4){0.30f, 0.55f, 0.26f, 1.00f};
+        colors[ImGuiCol_Separator]              = colors[ImGuiCol_Border];
+        colors[ImGuiCol_SeparatorHovered]       = (ImVec4){0.40f, 0.60f, 0.20f, 0.78f};
+        colors[ImGuiCol_SeparatorActive]        = (ImVec4){0.50f, 0.70f, 0.25f, 1.00f};
+        colors[ImGuiCol_ResizeGrip]             = (ImVec4){0.44f, 0.70f, 0.20f, 0.30f};
+        colors[ImGuiCol_ResizeGripHovered]      = (ImVec4){0.50f, 0.80f, 0.26f, 0.67f};
+        colors[ImGuiCol_ResizeGripActive]       = (ImVec4){0.58f, 0.90f, 0.30f, 0.95f};
+        colors[ImGuiCol_Tab]                    = colors[ImGuiCol_Header];
+        colors[ImGuiCol_TabHovered]             = colors[ImGuiCol_HeaderHovered];
+        //colors[ImGuiCol_TabActive]              = colors[ImGuiCol_HeaderActive];
+        //colors[ImGuiCol_TabUnfocused]           = igColorConvertU32ToFloat4(igGetColorU32_Col(ImGuiCol_Tab,1.0f) & 0x00FFFFFF | 0xDD000000); // More transparent
+        //colors[ImGuiCol_TabUnfocusedActive]     = igColorConvertU32ToFloat4(igGetColorU32_Col(ImGuiCol_TabActive,1.0f) & 0x00FFFFFF | 0xDD000000);
+        colors[ImGuiCol_DockingPreview]         = colors[ImGuiCol_HeaderActive]; 
+        colors[ImGuiCol_DockingEmptyBg]         = (ImVec4){0.20f, 0.20f, 0.20f, 1.00f};
+        colors[ImGuiCol_PlotLines]              = (ImVec4){0.61f, 0.61f, 0.61f, 1.00f};
+        colors[ImGuiCol_PlotLinesHovered]       = (ImVec4){1.00f, 0.43f, 0.35f, 1.00f};
+        colors[ImGuiCol_PlotHistogram]          = (ImVec4){0.90f, 0.70f, 0.00f, 1.00f};
+        colors[ImGuiCol_PlotHistogramHovered]   = (ImVec4){1.00f, 0.60f, 0.00f, 1.00f};
+        colors[ImGuiCol_TextSelectedBg]         = (ImVec4){0.26f, 0.59f, 0.98f, 0.35f};
+        colors[ImGuiCol_DragDropTarget]         = (ImVec4){1.00f, 1.00f, 0.00f, 0.90f};
+        //colors[ImGuiCol_NavHighlight]           = colors[ImGuiCol_HeaderHovered];
+        colors[ImGuiCol_NavWindowingHighlight]  = (ImVec4){1.00f, 1.00f, 1.00f, 0.70f};
+        colors[ImGuiCol_NavWindowingDimBg]      = (ImVec4){0.80f, 0.80f, 0.80f, 0.20f};
+        colors[ImGuiCol_ModalWindowDimBg]       = (ImVec4){0.20f, 0.20f, 0.20f, 0.60f};
+    }
+    
+    style->WindowRounding = 4.0f; 
+    style->FrameRounding = 4.0f;  
+    style->GrabRounding = 4.0f;   
+    style->PopupRounding = 4.0f;
+    style->ScrollbarRounding = 4.0f;
+    style->TabRounding = 4.0f;
+    style->WindowPadding = (ImVec2){8.0f, 8.0f};
+    style->FramePadding = (ImVec2){5.0f, 3.0f};
+    style->ItemSpacing = (ImVec2){8.0f, 4.0f};
+    style->ItemInnerSpacing = (ImVec2){4.0f, 4.0f};
+    style->IndentSpacing = 20.0f;
+    style->ScrollbarSize = 15.0f;
+    style->GrabMinSize = 12.0f;
+    // REFACTOR-NOTE: Font loading. If you have a preferred font, load it here.
+    // Example using cimgui:
+    // ioptr is the global ImGuiIO* (obtained via igGetIO())
+    if (ioptr && ioptr->Fonts) { // Ensure ImGuiIO and Fonts atlas are available
+        if (!ui_fonts_loaded) {
+            const char* font_path = "test.ttf";
+            // Check if font file exists before attempting to load it.
+            FILE* font_file = fopen(font_path, "rb");
+            if (font_file) {
+                fclose(font_file);
+
+                // Add font to the font atlas using cimgui.
+                // The ImFont* returned can be saved if you need to switch fonts using igPushFont/igPopFont.
+                ImFontConfig *cfg = ImFontConfig_ImFontConfig();
+                ImFontAtlas_Clear(ioptr->Fonts); // Clear existing fonts
+                ImFontAtlas_AddFontFromFileTTF(ioptr->Fonts, font_path, 16.0f, cfg, ImFontAtlas_GetGlyphRangesDefault(ioptr->Fonts));
+                static const ImWchar icon_ranges[] = { ICON_MIN_MS, ICON_MAX_MS, 0 };
+                ImFontAtlas_AddFontFromFileTTF(ioptr->Fonts, "data/fonts/MaterialSymbolsRounded.ttf", 16.0f, cfg, icon_ranges);
+            
+                // If fonts are added after the graphics backend has already created the font texture
+                // (e.g., after ImGui_ImplSDLGPU3_Init or if changing fonts dynamically),
+                // the font texture atlas must be rebuilt.
+                // In this codebase, UI_ApplyTheme is called after ImGui_ImplSDLGPU3_Init,
+                // so a rebuild would be necessary for a newly added font to appear.
+                // Consider loading fonts once during UI_Init before ImGui_ImplSDLGPU3_Init,
+                // or use a flag to ensure this rebuild happens only when fonts actually change.
+                // Example rebuild for SDL_gpu backend (using global gpu_device):
+                //if (gpu_device) {
+                    ImGui_ImplSDLGPU3_DestroyFontsTexture();
+                    ImGui_ImplSDLGPU3_CreateFontsTexture();
+                //}
+            } else {
+                // UI_Log("Font file '%s' not found. Using default ImGui font.", font_path); // Optional: Log font not found
+            }
+        
+            ui_fonts_loaded = true; // Mark that font loading has been attempted (successfully or not) to prevent future attempts.
+        }
     }
 }
 
@@ -273,7 +393,7 @@ void UI_DrawFileMenu(NES* nes) {
             igEndMenu();
         }
         igSeparator();
-        bool rom_loaded_for_state = (nes != NULL && strlen(ui_currentRomName) > 0 && strcmp(ui_currentRomName, "No ROM Loaded") != 0 && strcmp(ui_currentRomName, "Failed to load ROM") != 0);
+        bool rom_loaded_for_state = nes && nes->rom;
         if (igMenuItem_Bool("Save State...", "Ctrl+S", false, rom_loaded_for_state)) {
             ui_openSaveStateModal = true;
         }
@@ -299,7 +419,7 @@ void UI_DrawFileMenu(NES* nes) {
             ui_selectedSaveLoadSlot = ui_selectedSaveLoadSlot < 0 ? 0 : (ui_selectedSaveLoadSlot > 9 ? 9 : ui_selectedSaveLoadSlot);
 
             if (igButton("Save", (ImVec2){80,0})) {
-                UI_Log("Placeholder: Save state to slot %d for ROM: %s", ui_selectedSaveLoadSlot, ui_currentRomName);
+                UI_Log("Placeholder: Save state to slot %d for ROM: %s", ui_selectedSaveLoadSlot, nes->rom->name);
                 // if (nes) NES_SaveState(nes, ui_selectedSaveLoadSlot); // Actual call
                 ui_openSaveStateModal = false;
                 igCloseCurrentPopup();
@@ -321,7 +441,7 @@ void UI_DrawFileMenu(NES* nes) {
             ui_selectedSaveLoadSlot = ui_selectedSaveLoadSlot < 0 ? 0 : (ui_selectedSaveLoadSlot > 9 ? 9 : ui_selectedSaveLoadSlot);
 
             if (igButton("Load", (ImVec2){80,0})) {
-                UI_Log("Placeholder: Load state from slot %d for ROM: %s", ui_selectedSaveLoadSlot, ui_currentRomName);
+                UI_Log("Placeholder: Load state from slot %d for ROM: %s", ui_selectedSaveLoadSlot, nes->rom->name);
                 // if (nes) NES_LoadState(nes, ui_selectedSaveLoadSlot); // Actual call
                 ui_openLoadStateModal = false;
                 igCloseCurrentPopup();
@@ -751,138 +871,6 @@ void UI_ToggleFullscreen() {
     }
 }
 
-void UI_ApplyTheme(UI_Theme theme) {
-    current_ui_theme = theme;
-    ImGuiStyle* style = igGetStyle();
-    ImVec4* colors = style->Colors;
-
-    if (theme == UI_THEME_LIGHT) {
-        igStyleColorsLight(NULL);
-        colors[ImGuiCol_WindowBg] = (ImVec4){0.94f, 0.94f, 0.94f, 1.00f};
-        colors[ImGuiCol_FrameBg] = (ImVec4){1.00f, 1.00f, 1.00f, 1.00f};
-        colors[ImGuiCol_TitleBgActive] = (ImVec4){0.82f, 0.82f, 0.82f, 1.00f};
-        colors[ImGuiCol_MenuBarBg] = (ImVec4){0.86f, 0.86f, 0.86f, 1.00f};
-        colors[ImGuiCol_Header] = (ImVec4){0.90f, 0.90f, 0.90f, 1.00f};
-        colors[ImGuiCol_Button] = (ImVec4){0.80f, 0.80f, 0.80f, 1.00f};
-        colors[ImGuiCol_ButtonHovered] = (ImVec4){0.70f, 0.70f, 0.70f, 1.00f};
-        colors[ImGuiCol_ButtonActive] = (ImVec4){0.60f, 0.60f, 0.60f, 1.00f};
-        colors[ImGuiCol_CheckMark] = (ImVec4){0.26f, 0.59f, 0.98f, 1.00f}; // A more distinct checkmark for light theme
-        colors[ImGuiCol_SliderGrab] = (ImVec4){0.24f, 0.52f, 0.88f, 1.00f};
-        colors[ImGuiCol_SliderGrabActive] = (ImVec4){0.26f, 0.59f, 0.98f, 1.00f};
-        clear_color = (ImVec4){0.90f, 0.90f, 0.90f, 1.00f}; // Lighter clear color for light theme
-    } else { // UI_THEME_DARK
-        igStyleColorsDark(NULL); // Start with default dark
-        colors[ImGuiCol_Text]                   = (ImVec4){1.00f, 1.00f, 1.00f, 1.00f};
-        colors[ImGuiCol_TextDisabled]           = (ImVec4){0.50f, 0.50f, 0.50f, 1.00f};
-        colors[ImGuiCol_WindowBg]               = (ImVec4){0.10f, 0.10f, 0.11f, 1.00f}; // Slightly bluish dark
-        colors[ImGuiCol_ChildBg]                = (ImVec4){0.12f, 0.12f, 0.13f, 1.00f};
-        colors[ImGuiCol_PopupBg]                = (ImVec4){0.08f, 0.08f, 0.09f, 0.94f};
-        colors[ImGuiCol_Border]                 = (ImVec4){0.43f, 0.43f, 0.50f, 0.50f};
-        colors[ImGuiCol_BorderShadow]           = (ImVec4){0.00f, 0.00f, 0.00f, 0.00f};
-        colors[ImGuiCol_FrameBg]                = (ImVec4){0.20f, 0.21f, 0.22f, 0.54f}; // Controls background
-        colors[ImGuiCol_FrameBgHovered]         = (ImVec4){0.25f, 0.26f, 0.28f, 0.78f};
-        colors[ImGuiCol_FrameBgActive]          = (ImVec4){0.30f, 0.31f, 0.33f, 1.00f};
-        colors[ImGuiCol_TitleBg]                = (ImVec4){0.08f, 0.08f, 0.09f, 1.00f}; // Window title bar
-        colors[ImGuiCol_TitleBgActive]          = (ImVec4){0.15f, 0.16f, 0.18f, 1.00f}; // Active window title bar
-        colors[ImGuiCol_TitleBgCollapsed]       = (ImVec4){0.08f, 0.08f, 0.09f, 0.75f};
-        colors[ImGuiCol_MenuBarBg]              = (ImVec4){0.14f, 0.15f, 0.16f, 1.00f};
-        colors[ImGuiCol_ScrollbarBg]            = (ImVec4){0.02f, 0.02f, 0.02f, 0.53f};
-        colors[ImGuiCol_ScrollbarGrab]          = (ImVec4){0.31f, 0.31f, 0.33f, 1.00f};
-        colors[ImGuiCol_ScrollbarGrabHovered]   = (ImVec4){0.41f, 0.41f, 0.43f, 1.00f};
-        colors[ImGuiCol_ScrollbarGrabActive]    = (ImVec4){0.51f, 0.51f, 0.53f, 1.00f};
-        colors[ImGuiCol_CheckMark]              = (ImVec4){0.50f, 0.75f, 0.25f, 1.00f}; // Greenish checkmark
-        colors[ImGuiCol_SliderGrab]             = (ImVec4){0.40f, 0.65f, 0.20f, 1.00f};
-        colors[ImGuiCol_SliderGrabActive]       = (ImVec4){0.50f, 0.75f, 0.25f, 1.00f};
-        colors[ImGuiCol_Button]                 = (ImVec4){0.22f, 0.40f, 0.18f, 0.60f}; // Darker Greenish buttons
-        colors[ImGuiCol_ButtonHovered]          = (ImVec4){0.28f, 0.50f, 0.24f, 1.00f};
-        colors[ImGuiCol_ButtonActive]           = (ImVec4){0.32f, 0.58f, 0.28f, 1.00f};
-        colors[ImGuiCol_Header]                 = (ImVec4){0.20f, 0.38f, 0.16f, 0.58f}; // Collapsing header
-        colors[ImGuiCol_HeaderHovered]          = (ImVec4){0.26f, 0.48f, 0.22f, 0.80f};
-        colors[ImGuiCol_HeaderActive]           = (ImVec4){0.30f, 0.55f, 0.26f, 1.00f};
-        colors[ImGuiCol_Separator]              = colors[ImGuiCol_Border];
-        colors[ImGuiCol_SeparatorHovered]       = (ImVec4){0.40f, 0.60f, 0.20f, 0.78f};
-        colors[ImGuiCol_SeparatorActive]        = (ImVec4){0.50f, 0.70f, 0.25f, 1.00f};
-        colors[ImGuiCol_ResizeGrip]             = (ImVec4){0.44f, 0.70f, 0.20f, 0.30f};
-        colors[ImGuiCol_ResizeGripHovered]      = (ImVec4){0.50f, 0.80f, 0.26f, 0.67f};
-        colors[ImGuiCol_ResizeGripActive]       = (ImVec4){0.58f, 0.90f, 0.30f, 0.95f};
-        colors[ImGuiCol_Tab]                    = colors[ImGuiCol_Header];
-        colors[ImGuiCol_TabHovered]             = colors[ImGuiCol_HeaderHovered];
-        //colors[ImGuiCol_TabActive]              = colors[ImGuiCol_HeaderActive];
-        //colors[ImGuiCol_TabUnfocused]           = igColorConvertU32ToFloat4(igGetColorU32_Col(ImGuiCol_Tab,1.0f) & 0x00FFFFFF | 0xDD000000); // More transparent
-        //colors[ImGuiCol_TabUnfocusedActive]     = igColorConvertU32ToFloat4(igGetColorU32_Col(ImGuiCol_TabActive,1.0f) & 0x00FFFFFF | 0xDD000000);
-        colors[ImGuiCol_DockingPreview]         = colors[ImGuiCol_HeaderActive]; 
-        colors[ImGuiCol_DockingEmptyBg]         = (ImVec4){0.20f, 0.20f, 0.20f, 1.00f};
-        colors[ImGuiCol_PlotLines]              = (ImVec4){0.61f, 0.61f, 0.61f, 1.00f};
-        colors[ImGuiCol_PlotLinesHovered]       = (ImVec4){1.00f, 0.43f, 0.35f, 1.00f};
-        colors[ImGuiCol_PlotHistogram]          = (ImVec4){0.90f, 0.70f, 0.00f, 1.00f};
-        colors[ImGuiCol_PlotHistogramHovered]   = (ImVec4){1.00f, 0.60f, 0.00f, 1.00f};
-        colors[ImGuiCol_TextSelectedBg]         = (ImVec4){0.26f, 0.59f, 0.98f, 0.35f};
-        colors[ImGuiCol_DragDropTarget]         = (ImVec4){1.00f, 1.00f, 0.00f, 0.90f};
-        //colors[ImGuiCol_NavHighlight]           = colors[ImGuiCol_HeaderHovered];
-        colors[ImGuiCol_NavWindowingHighlight]  = (ImVec4){1.00f, 1.00f, 1.00f, 0.70f};
-        colors[ImGuiCol_NavWindowingDimBg]      = (ImVec4){0.80f, 0.80f, 0.80f, 0.20f};
-        colors[ImGuiCol_ModalWindowDimBg]       = (ImVec4){0.20f, 0.20f, 0.20f, 0.60f};
-        clear_color = (ImVec4){0.05f, 0.05f, 0.055f, 1.00f}; // Dark clear color for dark theme
-    }
-    
-    style->WindowRounding = 4.0f; 
-    style->FrameRounding = 4.0f;  
-    style->GrabRounding = 4.0f;   
-    style->PopupRounding = 4.0f;
-    style->ScrollbarRounding = 4.0f;
-    style->TabRounding = 4.0f;
-    style->WindowPadding = (ImVec2){8.0f, 8.0f};
-    style->FramePadding = (ImVec2){5.0f, 3.0f};
-    style->ItemSpacing = (ImVec2){8.0f, 4.0f};
-    style->ItemInnerSpacing = (ImVec2){4.0f, 4.0f};
-    style->IndentSpacing = 20.0f;
-    style->ScrollbarSize = 15.0f;
-    style->GrabMinSize = 12.0f;
-    // REFACTOR-NOTE: Font loading. If you have a preferred font, load it here.
-    // Example using cimgui:
-    // ioptr is the global ImGuiIO* (obtained via igGetIO())
-    if (ioptr && ioptr->Fonts) { // Ensure ImGuiIO and Fonts atlas are available
-        if (!ui_fonts_loaded) {
-            const char* font_path = "test.ttf";
-            // Check if font file exists before attempting to load it.
-            FILE* font_file = fopen(font_path, "rb");
-            if (font_file) {
-                fclose(font_file);
-
-                // Add font to the font atlas using cimgui.
-                // The ImFont* returned can be saved if you need to switch fonts using igPushFont/igPopFont.
-                ImFontConfig *cfg = ImFontConfig_ImFontConfig();
-                ImFontAtlas_Clear(ioptr->Fonts); // Clear existing fonts
-                ImFontAtlas_AddFontFromFileTTF(ioptr->Fonts, font_path, 16.0f, cfg, ImFontAtlas_GetGlyphRangesDefault(ioptr->Fonts));
-                static const ImWchar icon_ranges[] = { ICON_MIN_MS, ICON_MAX_MS, 0 };
-                ImFontAtlas_AddFontFromFileTTF(ioptr->Fonts, "data/fonts/MaterialSymbolsRounded.ttf", 16.0f, cfg, icon_ranges);
-            
-                // If fonts are added after the graphics backend has already created the font texture
-                // (e.g., after ImGui_ImplSDLGPU3_Init or if changing fonts dynamically),
-                // the font texture atlas must be rebuilt.
-                // In this codebase, UI_ApplyTheme is called after ImGui_ImplSDLGPU3_Init,
-                // so a rebuild would be necessary for a newly added font to appear.
-                // Consider loading fonts once during UI_Init before ImGui_ImplSDLGPU3_Init,
-                // or use a flag to ensure this rebuild happens only when fonts actually change.
-                // Example rebuild for SDL_gpu backend (using global gpu_device):
-                if (gpu_device) {
-                    ImGui_ImplSDLGPU3_DestroyFontsTexture();
-                    ImGui_ImplSDLGPU3_CreateFontsTexture();
-                }
-            } else {
-                // UI_Log("Font file '%s' not found. Using default ImGui font.", font_path); // Optional: Log font not found
-            }
-        
-            ui_fonts_loaded = true; // Mark that font loading has been attempted (successfully or not) to prevent future attempts.
-        }
-    }
-}
-
-
-void UI_InitStlye() { // Legacy name, kept for compatibility.
-    UI_ApplyTheme(current_ui_theme); // Apply default theme
-}
-
 void UI_Init() {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) { // REFACTOR-NOTE: Added SDL_INIT_GAMEPAD for ImGui gamepad nav
         DEBUG_FATAL("Could not initialize SDL: %s", SDL_GetError());
@@ -892,7 +880,7 @@ void UI_Init() {
 
     // REFACTOR-NOTE: Window flags: Removed SDL_WINDOW_OPENGL. SDL_WINDOW_RESIZABLE and SDL_WINDOW_MAXIMIZED are good.
     // Consider SDL_WINDOW_HIGH_PIXEL_DENSITY for HiDPI displays if desired.
-    window = SDL_CreateWindow("cNES Emulator (SDL3_gpu)", 1280, 720, SDL_WINDOW_RESIZABLE | SDL_WINDOW_MAXIMIZED);
+    window = SDL_CreateWindow("cNES Emulator (SDL3_gpu)", 1280, 720, SDL_WINDOW_RESIZABLE | SDL_WINDOW_MAXIMIZED | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!window) {
         DEBUG_FATAL("Could not create window: %s", SDL_GetError());
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Window Creation Error", SDL_GetError(), NULL);
@@ -951,8 +939,6 @@ void UI_Init() {
     ImGui_ImplSDLGPU3_Init(&init_info);          // SDL_gpu renderer backend
 
     UI_ApplyTheme(UI_THEME_DARK); // Apply initial theme (also sets clear_color)
-    strncpy(ui_currentRomName, "No ROM Loaded", sizeof(ui_currentRomName) -1);
-    ui_currentRomName[sizeof(ui_currentRomName)-1] = '\0';
 
     Profiler_Init(); // Initialize Profiler
 
@@ -967,9 +953,9 @@ void UI_SettingsWindow(NES* nes) {
         if (igBeginTabBar("SettingsTabs", 0)) {
             if (igBeginTabItem("Display", NULL, 0)) {
                 igText("Theme:"); igSameLine(0,5);
-                if (igRadioButton_Bool("Dark", current_ui_theme == UI_THEME_DARK)) UI_ApplyTheme(UI_THEME_DARK);
+                if (igRadioButton_Bool("Dark", ui_current_theme == UI_THEME_DARK)) UI_ApplyTheme(UI_THEME_DARK);
                 igSameLine(0,5);
-                if (igRadioButton_Bool("Light", current_ui_theme == UI_THEME_LIGHT)) UI_ApplyTheme(UI_THEME_LIGHT);
+                if (igRadioButton_Bool("Light", ui_current_theme == UI_THEME_LIGHT)) UI_ApplyTheme(UI_THEME_LIGHT);
                 igSeparator();
                 if (igCheckbox("Fullscreen (Window)", &ui_sdl_fullscreen)) UI_ToggleFullscreen();
                 igSameLine(0, 10); igTextDisabled("(F11)");
@@ -1009,13 +995,14 @@ void UI_SettingsWindow(NES* nes) {
 void UI_DrawAboutWindow() {
     if (!ui_showAboutWindow) return;
     igSetNextWindowSize((ImVec2){400, 250}, ImGuiCond_FirstUseEver); // REFACTOR-NOTE: Slightly larger for more info
-    if (igBegin("About cEMU", &ui_showAboutWindow, ImGuiWindowFlags_AlwaysAutoResize)) {
-        igText("cEMU - A NES Emulator Project");
-        igText("Version: 0.2.sdl3gpu (SDL3 + cimgui + SDL_gpu)"); // REFACTOR-NOTE: Updated version
-        igText("Author: Your Name/Handle Here"); // REFACTOR-NOTE: Fill this in!
+    if (igBegin("About cNES", &ui_showAboutWindow, ImGuiWindowFlags_AlwaysAutoResize)) {
+        igText("cNES - A fast, versatile NES emulator.");
+        igText("Written in C with SDL3 and ImGui.");
+        igText("Version: %s", CNES_VERSION_STRING);
+        igText("Build Date: %s", CNES_VERSION_BUILD_DATE);
+        igText("Author: Riley Webb");
         igSeparator();
         igText("Powered by Dear ImGui (cimgui bindings) and SDL3 with SDL_gpu.");
-        igText("This project is for demonstration and learning purposes.");
         igSeparator();
         // REFACTOR-NOTE: Add a link to your project's GitHub or website.
         if (igButton("Project on GitHub (Example)", (ImVec2){-FLT_MIN,0})) { 
@@ -1232,7 +1219,7 @@ void UI_DrawMainMenuBar(NES* nes) {
     if (igBeginMainMenuBar()) {
         UI_DrawFileMenu(nes);
         if (igBeginMenu("Emulation", true)) {
-            bool rom_loaded = (nes != NULL && strlen(ui_currentRomName) > 0 && strcmp(ui_currentRomName, "No ROM Loaded") != 0 && strcmp(ui_currentRomName, "Failed to load ROM") != 0);
+            bool rom_loaded = nes && nes->rom && nes->rom;
             if (igMenuItem_Bool(ui_paused ? "Resume " ICON_MS_PLAY_ARROW : "Pause", "F6", false, rom_loaded)) UI_TogglePause(nes);
             if (igMenuItem_Bool("Reset", "F5", false, rom_loaded)) UI_Reset(nes);
             if (igMenuItem_Bool("Step CPU Instruction", "F7", false, rom_loaded && ui_paused)) { if(nes && nes->cpu) NES_Step(nes); }
@@ -1618,7 +1605,7 @@ void UI_DrawStatusBar(NES* nes)
         // FPS calculation is now handled by the profiler
         ui_fps = Profiler_GetFPS();
         
-        igText("FPS: %.1f | ROM: %s | %s", ui_fps, ui_currentRomName, ui_paused ? "Paused" : "Running");
+        igText("FPS: %.1f | ROM: %s | %s", ui_fps, nes->rom ? nes->rom->name : "No ROM Loaded", ui_paused ? "Paused" : "Running");
         
         const char* version_text = CNES_VERSION_BUILD_STRING; // REFACTOR-NOTE: Consistent versioning
         ImVec2 version_text_size;
@@ -1765,7 +1752,7 @@ void UI_Update(NES* nes) {
             if (ctrl_pressed && e.key.key == SDLK_O) {
                  SDL_ShowOpenFileDialog(FileDialogCallback, nes, window, filters, SDL_arraysize(filters), NULL, false);
             }
-            bool rom_loaded_for_state = (nes != NULL && strlen(ui_currentRomName) > 0 && strcmp(ui_currentRomName, "No ROM Loaded") != 0 && strcmp(ui_currentRomName, "Failed to load ROM") != 0);
+            bool rom_loaded_for_state = nes && nes->rom;
             if (ctrl_pressed && e.key.key == SDLK_S && rom_loaded_for_state) {
                 ui_openSaveStateModal = true;
             }
@@ -1826,10 +1813,10 @@ void UI_Update(NES* nes) {
             Imgui_ImplSDLGPU3_PrepareDrawData(draw_data, command_buffer);
             SDL_GPUColorTargetInfo target_info = {0}; // Important to zero-initialize
             target_info.texture = swapchain_texture;
-            target_info.clear_color.r = clear_color.x; // Uses global clear_color set by theme
-            target_info.clear_color.g = clear_color.y;
-            target_info.clear_color.b = clear_color.z;
-            target_info.clear_color.a = clear_color.w;
+            target_info.clear_color.r = 0; // Uses global clear_color set by theme
+            target_info.clear_color.g = 0;
+            target_info.clear_color.b = 0;
+            target_info.clear_color.a = 1;
             target_info.load_op = SDL_GPU_LOADOP_CLEAR;
             target_info.store_op = SDL_GPU_STOREOP_STORE;
 

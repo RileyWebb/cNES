@@ -10,6 +10,13 @@ typedef struct BUS BUS;
 typedef struct ROM ROM;
 //typedef struct Profiler Profiler;
 
+typedef enum { 
+    EMU_SETTINGS_DEFAULT, 
+    EMU_SETTINGS_PAL, 
+    EMU_SETTINGS_NTSC,
+    EMU_SETTINGS_DENDY,
+} NES_Region;
+
 typedef struct NES {
     CPU* cpu; // Pointer to the CPU
     PPU* ppu; // Pointer to the PPU
@@ -21,10 +28,30 @@ typedef struct NES {
     uint8_t controller_shift[2]; // Shift registers for controllers
 
     //Profiler *profiler;
+    struct emu_settings 
+    {
+        enum
+        {
+            NES_CPU_MODE_JIT,
+            NES_CPU_MODE_INTERPRETER,
+            NES_CPU_MODE_DEBUG,
+        } cpu_mode; // CPU emulation setting
+
+        enum
+        {
+            NES_PPU_MODE_JIT,
+            NES_PPU_MODE_INTERPRETER,
+            NES_PPU_MODE_ACCELERATED,
+            NES_PPU_MODE_DEBUG,
+        } ppu_mode; // CPU emulation setting
+
+        NES_Region cpu_region; // CPU region setting
+        NES_Region ppu_region; // PPU region setting
+    } settings; // Emulator settings
 } NES;
 
 NES *NES_Create();
-int NES_Load(const char* path, NES* nes);
+int NES_Load(NES* nes, ROM* rom);
 void NES_Destroy(NES* nes);
 
 void NES_StepFrame(NES *nes);
