@@ -56,6 +56,7 @@ extern CPU_Opcode cpu_opcodes[256];
 CPU *CPU_Create(NES *nes);
 void CPU_Reset(CPU* cpu);
 int CPU_Step(CPU* cpu);
+void CPU_Destroy(CPU* cpu);
 
 void CPU_Interupt(CPU* cpu);
 void CPU_NMI(CPU* cpu);

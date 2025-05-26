@@ -63,6 +63,13 @@ void CPU_Reset(CPU *cpu)
     cpu->total_cycles = 0;
 }
 
+void CPU_Destroy(CPU* cpu)
+{
+    if (cpu) {
+        free(cpu); // Free CPU memory
+    }
+}
+
 static inline void CPU_Push(CPU *cpu, uint8_t value) 
 {
     cpu->nes->bus->memory[0x0100 + cpu->sp] = value; // Push to stack

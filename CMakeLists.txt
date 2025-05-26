@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 project(cNES C)
 
+enable_testing()
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
@@ -71,3 +73,5 @@ add_custom_target(copy_tests
 )
 
 add_dependencies(cNES copy_info copy_tests copy_data)
+
+add_subdirectory(tests)

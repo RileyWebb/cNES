@@ -23,7 +23,7 @@ int main(int argc, char **argv)
 
     NES* nes = NES_Create();
 
-    NES_Load(nes, ROM_LoadFile("/home/riley/Downloads/Super Mario Bros..nes"));
+    //NES_Load(nes, NULL);
     //NES_Load("nestest.nes", nes);
     //NES_Reset(nes);
 
