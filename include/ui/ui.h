@@ -16,6 +16,7 @@ void UI_Log(const char* fmt, ...); // Declaration for UI_Log if not already publ
 
 // New UI theme type
 typedef enum {
+    UI_THEME_DEFAULT = 0,
     UI_THEME_DARK,
     UI_THEME_LIGHT
 } UI_Theme;
@@ -59,6 +60,7 @@ void UI_ToggleFullscreen();
 // ui_menus.c
 void UI_DrawMainMenuBar(NES *nes);
 void UI_SettingsMenu(NES *nes);
+void UI_DrawAboutWindow();
 
 // Max number of recent ROMs to store
 #define UI_MAX_RECENT_ROMS 5

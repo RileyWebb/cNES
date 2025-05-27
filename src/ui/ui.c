@@ -66,7 +66,7 @@ bool ui_showCreditsWindow = false;
 bool ui_showLicenceWindow = false;
 
 float ui_font_size = 24.0f; // Default font size, can be adjusted in settings
-char *ui_font_path = "data\\fonts\\JetbrainsMono.ttf";
+char *ui_font_path = "data/fonts/JetBrainsMono.ttf";
 bool ui_requestReload = false; // Flag to indicate if a reload is requested
 
 static bool ui_first_frame = true; // Flag for applying default docking layout
@@ -356,6 +356,14 @@ void UI_ApplyTheme(UI_Theme theme)
             //ui_fonts_loaded = true; // Mark that font loading has been attempted (successfully or not) to prevent future attempts.
         }
     }
+    SDL_GPUDevice *dev2 = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, false, NULL); // Recreate device to apply new theme
+    const char *gpu_name = SDL_GetGPUDeviceDriver(dev2);
+    printf("dev2 GPU driver: %s\n", gpu_name ? gpu_name : "Unknown");
+    const char *gpuasda_name = SDL_GetGPUDeviceDriver(gpu_device);
+    printf("gpu_device GPU driver: %s\n", gpuasda_name ? gpuasda_name : "Unknown");
+    //print dev2 addr and gpu_device addr
+    printf("dev2 address: %p\n", (void*)dev2);
+    printf("gpu_device address: %p\n", (void*)gpu_device);
 }
 
 void UI_LogWindow()
@@ -946,156 +954,6 @@ void UI_Init()
     UI_Log("cEMU Initialized with SDL3_gpu. Welcome!");
 }
 
-void UI_DrawAboutWindow()
-{
-    if (!ui_showAboutWindow)
-        return;
-    igSetNextWindowSize((ImVec2){400, 250}, ImGuiCond_FirstUseEver); // REFACTOR-NOTE: Slightly larger for more info
-    if (igBegin("About cNES", &ui_showAboutWindow, ImGuiWindowFlags_AlwaysAutoResize))
-    {
-        igText("cNES - A fast, versatile NES emulator.");
-        igText("Written in C with SDL3 and ImGui.");
-        igText("Version: %s", CNES_VERSION_STRING);
-        igText("Build Date: %s", CNES_VERSION_BUILD_DATE);
-        igText("Author: Riley Webb");
-        igSeparator();
-        igText("Powered by Dear ImGui (cimgui bindings) and SDL3 with SDL_gpu.");
-        igSeparator();
-        // REFACTOR-NOTE: Add a link to your project's GitHub or website.
-        if (igButton("Project on GitHub (Example)", (ImVec2){-FLT_MIN, 0}))
-        {
-            SDL_OpenURL("https://github.com/RileyWebb/cNES"); // Example URL
-        }
-        if (igButton("OK", (ImVec2){-FLT_MIN, 0}))
-            ui_showAboutWindow = false;
-    }
-    igEnd();
-}
-
-static ImGuiMarkdown_Config mdConfig;
-
-static char *credits_markdown;
-static char *licence_markdown;
-
-static void UI_MD_LinkCallback(ImGuiMarkdown_LinkCallbackData link)
-{
-    if (link.link && link.linkLength > 0)
-    {
-        char truncated_link[link.linkLength + 1];
-        strncpy(truncated_link, link.link, link.linkLength);
-        truncated_link[link.linkLength] = '\0';
-        SDL_OpenURL(truncated_link);
-    }
-}
-
-void UI_DrawCreditsWindow()
-{
-    if (!ui_showCreditsWindow)
-        return;
-    igSetNextWindowSize((ImVec2){400, 250}, ImGuiCond_FirstUseEver);
-    if (igBegin("Credits", &ui_showCreditsWindow, ImGuiWindowFlags_None))
-    {
-        ImGuiMarkdown_Config_Init(&mdConfig); // Initialize with defaults
-
-        // Customize config
-        mdConfig.linkCallback = UI_MD_LinkCallback;
-        // mdConfig.linkIcon = ICON_FA_LINK; // If using FontAwesome
-
-        // if (myH1Font) mdConfig.headingFormats[0].font = myH1Font;
-        // mdConfig.headingFormats[0].separator = true;
-
-        // if (myH2Font) mdConfig.headingFormats[1].font = myH2Font;
-        // mdConfig.headingFormats[1].separator = true;
-
-        // H3 uses default font but no separator
-        // mdConfig.headingFormats[2].font = NULL; // Or igGetDefaultFont()
-        // mdConfig.headingFormats[2].separator = false;
-
-        // mdConfig.formatCallback = MyCustomFormatCallback; // If you have one
-
-        if (credits_markdown)
-        {
-            ImGuiMarkdown(credits_markdown, strlen(credits_markdown), &mdConfig);
-        }
-        else
-        {
-            FILE *file = fopen("CREDITS", "r");
-            if (file)
-            {
-                fseek(file, 0, SEEK_END);
-                long length = ftell(file);
-                fseek(file, 0, SEEK_SET);
-                credits_markdown = (char *)malloc(length + 1);
-                if (credits_markdown)
-                {
-                    fread(credits_markdown, 1, length, file);
-                    credits_markdown[length] = '\0'; // Null-terminate
-                }
-                fclose(file);
-            }
-            else
-            {
-                igText("Error loading credits.");
-            }
-        }
-    }
-    igEnd();
-}
-
-void UI_DrawLicenceWindow()
-{
-    if (!ui_showLicenceWindow)
-        return;
-    igSetNextWindowSize((ImVec2){400, 250}, ImGuiCond_FirstUseEver);
-    if (igBegin("Licence", &ui_showLicenceWindow, ImGuiWindowFlags_None))
-    {
-        ImGuiMarkdown_Config_Init(&mdConfig); // Initialize with defaults
-
-        // Customize config
-        mdConfig.linkCallback = UI_MD_LinkCallback;
-        // mdConfig.linkIcon = ICON_FA_LINK; // If using FontAwesome
-
-        // if (myH1Font) mdConfig.headingFormats[0].font = myH1Font;
-        // mdConfig.headingFormats[0].separator = true;
-
-        // if (myH2Font) mdConfig.headingFormats[1].font = myH2Font;
-        // mdConfig.headingFormats[1].separator = true;
-
-        // H3 uses default font but no separator
-        // mdConfig.headingFormats[2].font = NULL; // Or igGetDefaultFont()
-        // mdConfig.headingFormats[2].separator = false;
-
-        // mdConfig.formatCallback = MyCustomFormatCallback; // If you have one
-
-        if (licence_markdown)
-        {
-            ImGuiMarkdown(licence_markdown, strlen(licence_markdown), &mdConfig);
-        }
-        else
-        {
-            FILE *file = fopen("LICENCE", "r");
-            if (file)
-            {
-                fseek(file, 0, SEEK_END);
-                long length = ftell(file);
-                fseek(file, 0, SEEK_SET);
-                licence_markdown = (char *)malloc(length + 1);
-                if (licence_markdown)
-                {
-                    fread(licence_markdown, 1, length, file);
-                    licence_markdown[length] = '\0'; // Null-terminate
-                }
-                fclose(file);
-            }
-            else
-            {
-                igText("Error loading licence.");
-            }
-        }
-    }
-    igEnd();
-}
-
 static void UI_DebugToolbar(NES *nes)
 {
     if (!ui_showToolbar)
@@ -1673,10 +1531,6 @@ void UI_Draw(NES *nes)
         UI_SettingsMenu(nes);
     if (ui_showAboutWindow)
         UI_DrawAboutWindow();
-    if (ui_showCreditsWindow)
-        UI_DrawCreditsWindow();
-    if (ui_showLicenceWindow)
-        UI_DrawLicenceWindow();
 
     // For debugging ImGui itself
     //igShowDemoWindow(NULL);

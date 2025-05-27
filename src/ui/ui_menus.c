@@ -5,13 +5,16 @@
 #define CIMGUI_DEFINE_ENUMS_AND_STRUCTS
 #include <cimgui.h>
 #include <SDL3/SDL.h>
+#include "ui/cimgui_markdown.h"
 
 #include "debug.h"
 
+#include "cNES/version.h"
 #include "cNES/nes.h"
 #include "cNES/rom.h"
 
 #include "ui/ui.h"
+
 
 static const SDL_DialogFileFilter filters[] = {
     {"NES ROMs", "nes;fds;unif;nes2;ines"},
@@ -261,7 +264,7 @@ void UI_SettingsMenu(NES *nes)
                         if (ext && (strcmp(ext, ".ttf") == 0))
                         {
                             char full_store_path[512];
-                            snprintf(full_store_path, sizeof(full_store_path), "%s%s", font_dir_store_prefix, entry->d_name);
+                            snprintf(full_store_path, sizeof(full_store_path), "%s%s", font_dir_scan_path, entry->d_name);
                             font_files[font_count] = strdup(full_store_path);
 
                             // Create display name without extension
@@ -550,13 +553,146 @@ void UI_DrawMainMenuBar(NES *nes)
         {
             if (igMenuItem_Bool("About", NULL, false, true))
                 ui_showAboutWindow = true;
-            if (igMenuItem_Bool("Credits", NULL, false, true))
-                ui_showCreditsWindow = true;
-            if (igMenuItem_Bool("Licence", NULL, false, true))
-                ui_showLicenceWindow = true;
+            //if (igMenuItem_Bool("Credits", NULL, false, true))
+                //ui_showCreditsWindow = true;
+            //if (igMenuItem_Bool("Licence", NULL, false, true))
+                //ui_showLicenceWindow = true;
             // REFACTOR-NOTE: Add "View Controls" or "Help Topics" menu item with keybinds, basic usage.
             igEndMenu();
         }
         igEndMainMenuBar();
     }
+}
+
+static ImGuiMarkdown_Config mdConfig;
+
+static char *credits_markdown;
+static char *licence_markdown;
+
+static void UI_MD_LinkCallback(ImGuiMarkdown_LinkCallbackData link)
+{
+    if (link.link && link.linkLength > 0)
+    {
+        char truncated_link[link.linkLength + 1];
+        strncpy(truncated_link, link.link, link.linkLength);
+        truncated_link[link.linkLength] = '\0';
+        SDL_OpenURL(truncated_link);
+    }
+}
+
+void UI_DrawAboutWindow()
+{
+    if (!ui_showAboutWindow)
+        return;
+    
+    ImVec2 viewportSize = igGetMainViewport()->WorkSize;
+    ImVec2 windowSize = {viewportSize.x * 0.6f, viewportSize.y * 0.7f};
+    igSetNextWindowSize(windowSize, ImGuiCond_FirstUseEver);
+    igSetNextWindowPos((ImVec2){(viewportSize.x - windowSize.x) / 2, (viewportSize.y - windowSize.y) / 2}, ImGuiCond_FirstUseEver, (ImVec2){0, 0});
+    
+    if (igBegin("About cNES", &ui_showAboutWindow, ImGuiWindowFlags_None))
+    {
+        if (igBeginTabBar("AboutTabs", 0))
+        {
+            if (igBeginTabItem("About", NULL, 0))
+            {
+                igText("cNES - A fast, versatile NES emulator.");
+                igText("Written in C with SDL3 and ImGui.");
+                igSeparator();
+                igText("Version: %s", CNES_VERSION_STRING);
+                igText("Build Date: %s", CNES_VERSION_BUILD_DATE);
+                igText("Author: Riley Webb");
+                igSeparator();
+                igText("Powered by Dear ImGui (cimgui bindings) and SDL3 with SDL_gpu.");
+                igSeparator();
+                
+                if (igButton("Project on GitHub", (ImVec2){-FLT_MIN, 0}))
+                {
+                    SDL_OpenURL("https://github.com/RileyWebb/cNES");
+                }
+                igEndTabItem();
+            }
+            
+            if (igBeginTabItem("License", NULL, 0))
+            {
+                ImGuiMarkdown_Config_Init(&mdConfig);
+                mdConfig.linkCallback = UI_MD_LinkCallback;
+                
+                if (licence_markdown)
+                {
+                    ImGuiMarkdown(licence_markdown, strlen(licence_markdown), &mdConfig);
+                }
+                else
+                {
+                    FILE *file = fopen("LICENCE", "r");
+                    if (file)
+                    {
+                        fseek(file, 0, SEEK_END);
+                        long length = ftell(file);
+                        fseek(file, 0, SEEK_SET);
+                        if (length > 0)
+                        {
+                            licence_markdown = (char *)malloc((size_t)length + 1);
+                            if (licence_markdown)
+                            {
+                                fread(licence_markdown, 1, (size_t)length, file);
+                                licence_markdown[length] = '\0';
+                            }
+                        }
+                        fclose(file);
+                    }
+                    else
+                    {
+                        igText("Error loading licence file.");
+                    }
+                }
+                igEndTabItem();
+            }
+
+            if (igBeginTabItem("Credits", NULL, 0))
+            {
+                ImGuiMarkdown_Config_Init(&mdConfig);
+                mdConfig.linkCallback = UI_MD_LinkCallback;
+                
+                if (credits_markdown)
+                {
+                    ImGuiMarkdown(credits_markdown, strlen(credits_markdown), &mdConfig);
+                }
+                else
+                {
+                    FILE *file = fopen("CREDITS", "r");
+                    if (file)
+                    {
+                        fseek(file, 0, SEEK_END);
+                        long length = ftell(file);
+                        fseek(file, 0, SEEK_SET);
+                        if (length > 0)
+                        {
+                            credits_markdown = (char *)malloc((size_t)length + 1);
+                            if (credits_markdown)
+                            {
+                                fread(credits_markdown, 1, (size_t)length, file);
+                                credits_markdown[length] = '\0';
+                            }
+                        }
+                        fclose(file);
+                    }
+                    else
+                    {
+                        igText("Error loading credits file.");
+                    }
+                }
+                igEndTabItem();
+            }
+            
+            if (igBeginTabItem("Commits", NULL, 0))
+            {
+                igText("Recent Git Commits:");
+                igText("TODO: Add git commit history display here.");
+                igEndTabItem();
+            }
+            igEndTabBar();
+        }
+    }
+    igEnd();
 }
