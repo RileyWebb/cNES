@@ -25,6 +25,9 @@ https://github.com/libsdl-org/SDL_shadercross
 - profiler settings menu and fps overlay (with graph option)
 https://github.com/christopherpow/nes-test-roms/tree/master
 
+
+https://www.nesdev.org/wiki/6502_cycle_times
+
 These are the tables the test uses. Since it passes on a NES, the values
 are pretty much guaranteed correct.
 

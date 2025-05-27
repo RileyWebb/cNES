@@ -11,7 +11,7 @@
 
 #include "cNES/debugging.h"
 #include "cNES/cpu.h" // for cpu_opcodes
-
+/*
 void format_operand(char *buffer, size_t buffer_size, const char *fmt, ...) {
     if (buffer == NULL || buffer_size == 0) return;
     va_list args;
@@ -130,4 +130,4 @@ uint16_t disassemble(NES *nes, uint16_t address, char *buffer, size_t buffer_siz
     }
     
     return next_addr;
-}
+}*/

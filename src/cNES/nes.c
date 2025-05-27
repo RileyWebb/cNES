@@ -16,15 +16,15 @@ NES *NES_Create()
     if (!nes) {goto error;}
     memset(nes, 0, sizeof(NES)); // Initialize NES structure to zero
 
+    nes->bus = malloc(sizeof(BUS));
+    if (!nes->bus) {goto error;}
+    memset(nes->bus, 0, sizeof(BUS)); // Initialize BUS structure to zero
+
     nes->cpu = CPU_Create(nes);
     if (!nes->cpu) {goto error;}
 
     nes->ppu = PPU_Create(nes);
     if (!nes->ppu) {goto error;}
-
-    nes->bus = malloc(sizeof(BUS));
-    if (!nes->bus) {goto error;}
-    memset(nes->bus, 0, sizeof(BUS)); // Initialize BUS structure to zero
 
     NES_Reset(nes);
 

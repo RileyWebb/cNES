@@ -28,18 +28,18 @@
 #include "ui/ui.h"
 
 // --- SDL and ImGui Globals ---
-SDL_Window *window;
+SDL_Window *ui_window;
 SDL_GPUDevice *gpu_device;
 ImGuiIO *ioptr;
 
 // --- UI State ---
-static bool ui_paused = false;
+bool ui_paused = true;
 static char ui_romPath[256] = "";
 static char ui_logBuffer[8192] = ""; // REFACTOR-NOTE: Increased buffer size. Consider a circular buffer for very extensive logging.
 static int ui_logLen = 0;
 static float ui_fps = 0.0f;
-static float ui_master_volume = 0.8f;
-static bool ui_sdl_fullscreen = false;
+float ui_master_volume = 0.8f;
+bool ui_fullscreen = false;
 
 static char ui_recentRoms[UI_MAX_RECENT_ROMS][256];
 static int ui_recentRomsCount = 0;
@@ -64,6 +64,10 @@ bool ui_showSettingsWindow = false;
 bool ui_showAboutWindow = false;
 bool ui_showCreditsWindow = false;
 bool ui_showLicenceWindow = false;
+
+float ui_font_size = 24.0f; // Default font size, can be adjusted in settings
+char *ui_font_path = "data\\fonts\\JetbrainsMono.ttf";
+bool ui_requestReload = false; // Flag to indicate if a reload is requested
 
 static bool ui_first_frame = true; // Flag for applying default docking layout
 
@@ -174,53 +178,6 @@ static void UI_AddRecentRom(const char *path)
     ui_recentRoms[0][255] = '\0';
 }
 
-void UI_LoadRom(NES *nes, const char *path)
-{
-    if (NES_Load(nes, ROM_LoadFile(path)) == 0)
-    {
-        UI_Log("Loaded ROM: %s", path);
-        NES_Reset(nes);
-        UI_AddRecentRom(path);
-    }
-    else
-    {
-        UI_Log("Failed to load ROM: %s", path);
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "ROM Load Error", "Failed to load the specified ROM file.", window);
-    }
-}
-
-void UI_Reset(NES *nes)
-{
-    if (nes)
-    { // REFACTOR-NOTE: Added null check for safety
-        NES_Reset(nes);
-        UI_Log("NES Reset");
-    }
-    else
-    {
-        UI_Log("Cannot reset: No NES context.");
-    }
-}
-
-void UI_StepFrame(NES *nes)
-{
-    if (nes)
-    { // REFACTOR-NOTE: Added null check
-        NES_StepFrame(nes);
-        UI_Log("Stepped one frame");
-    }
-    else
-    {
-        UI_Log("Cannot step frame: No NES context.");
-    }
-}
-
-void UI_TogglePause(NES *nes)
-{ // REFACTOR-NOTE: NES context not strictly needed here, but good for consistency if actions depend on it.
-    ui_paused = !ui_paused;
-    UI_Log(ui_paused ? "Emulation Paused" : "Emulation Resumed");
-}
-
 static void UI_HandleInputEvent(const SDL_Event *e)
 {
     int pressed = (e->type == SDL_EVENT_KEY_DOWN);
@@ -229,28 +186,28 @@ static void UI_HandleInputEvent(const SDL_Event *e)
     {
     // Player 1
     case SDLK_K:
-        nes_input_state[0] = pressed ? (nes_input_state[0] | 0x01) : (nes_input_state[0] & ~0x01);
+        nes_input_state[0] = (uint8_t)(pressed ? (nes_input_state[0] | 0x01) : (nes_input_state[0] & ~0x01));
         break; // A
     case SDLK_J:
-        nes_input_state[0] = pressed ? (nes_input_state[0] | 0x02) : (nes_input_state[0] & ~0x02);
+        nes_input_state[0] = (uint8_t)(pressed ? (nes_input_state[0] | 0x02) : (nes_input_state[0] & ~0x02));
         break; // B
     case SDLK_RSHIFT:
-        nes_input_state[0] = pressed ? (nes_input_state[0] | 0x04) : (nes_input_state[0] & ~0x04);
+        nes_input_state[0] = (uint8_t)(pressed ? (nes_input_state[0] | 0x04) : (nes_input_state[0] & ~0x04));
         break; // Select
     case SDLK_RETURN:
-        nes_input_state[0] = pressed ? (nes_input_state[0] | 0x08) : (nes_input_state[0] & ~0x08);
+        nes_input_state[0] = (uint8_t)(pressed ? (nes_input_state[0] | 0x08) : (nes_input_state[0] & ~0x08));
         break; // Start
     case SDLK_W:
-        nes_input_state[0] = pressed ? (nes_input_state[0] | 0x10) : (nes_input_state[0] & ~0x10);
+        nes_input_state[0] = (uint8_t)(pressed ? (nes_input_state[0] | 0x10) : (nes_input_state[0] & ~0x10));
         break; // Up
     case SDLK_S:
-        nes_input_state[0] = pressed ? (nes_input_state[0] | 0x20) : (nes_input_state[0] & ~0x20);
+        nes_input_state[0] = (uint8_t)(pressed ? (nes_input_state[0] | 0x20) : (nes_input_state[0] & ~0x20));
         break; // Down
     case SDLK_A:
-        nes_input_state[0] = pressed ? (nes_input_state[0] | 0x40) : (nes_input_state[0] & ~0x40);
+        nes_input_state[0] = (uint8_t)(pressed ? (nes_input_state[0] | 0x40) : (nes_input_state[0] & ~0x40));
         break; // Left
     case SDLK_D:
-        nes_input_state[0] = pressed ? (nes_input_state[0] | 0x80) : (nes_input_state[0] & ~0x80);
+        nes_input_state[0] = (uint8_t)(pressed ? (nes_input_state[0] | 0x80) : (nes_input_state[0] & ~0x80));
         break; // Right
     // REFACTOR-NOTE: Add Player 2 controls if desired
     default:
@@ -259,8 +216,6 @@ static void UI_HandleInputEvent(const SDL_Event *e)
 }
 
 UI_Theme ui_current_theme = UI_THEME_DARK;
-
-static bool ui_fonts_loaded = false; // Flag for one-time font loading attempt
 
 void UI_ApplyTheme(UI_Theme theme)
 {
@@ -354,13 +309,12 @@ void UI_ApplyTheme(UI_Theme theme)
     // REFACTOR-NOTE: Font loading. If you have a preferred font, load it here.
     // Example using cimgui:
     // ioptr is the global ImGuiIO* (obtained via igGetIO())
-    if (ioptr && ioptr->Fonts)
+    if (ioptr)// && ioptr->Fonts)
     { // Ensure ImGuiIO and Fonts atlas are available
-        if (!ui_fonts_loaded)
+        //if (!ui_fonts_loaded)
         {
-            const char *font_path = "test.ttf";
             // Check if font file exists before attempting to load it.
-            FILE *font_file = fopen(font_path, "rb");
+            FILE *font_file = fopen(ui_font_path, "rb");
             if (font_file)
             {
                 fclose(font_file);
@@ -368,9 +322,16 @@ void UI_ApplyTheme(UI_Theme theme)
                 // Add font to the font atlas using cimgui.
                 // The ImFont* returned can be saved if you need to switch fonts using igPushFont/igPopFont.
                 ImFontConfig *cfg = ImFontConfig_ImFontConfig();
-                cfg->MergeMode = true;
+                ImFontGlyphRangesBuilder *builder = ImFontGlyphRangesBuilder_ImFontGlyphRangesBuilder();
+                //cfg->MergeMode = true;
                 ImFontAtlas_Clear(ioptr->Fonts); // Clear existing fonts
-                ImFontAtlas_AddFontFromFileTTF(ioptr->Fonts, font_path, 16.0f, cfg, ImFontAtlas_GetGlyphRangesDefault(ioptr->Fonts));
+                //ImFontAtlas_ClearFonts(ioptr->Fonts); // Clear existing font glyphs
+                ImFontGlyphRangesBuilder_AddRanges(builder, ImFontAtlas_GetGlyphRangesDefault(ioptr->Fonts));
+                ImFontGlyphRangesBuilder_AddChar(builder, 0xf04b); // Play Icon
+                ImFontGlyphRangesBuilder_AddChar(builder, 0xf04c); // Pause Icon
+                ImVector_ImWchar *ranges = ImVector_ImWchar_create();
+                ImFontGlyphRangesBuilder_BuildRanges(builder, ranges);
+                ImFontAtlas_AddFontFromFileTTF(ioptr->Fonts, ui_font_path, ui_font_size, cfg, ranges->Data);
                 // static const ImWchar icon_ranges[] = { ICON_MIN_MS, ICON_MAX_MS, 0 };
                 // ImFontAtlas_AddFontFromFileTTF(ioptr->Fonts, "data/fonts/MaterialSymbolsRounded.ttf", 16.0f, cfg, icon_ranges);
 
@@ -382,154 +343,17 @@ void UI_ApplyTheme(UI_Theme theme)
                 // Consider loading fonts once during UI_Init before ImGui_ImplSDLGPU3_Init,
                 // or use a flag to ensure this rebuild happens only when fonts actually change.
                 // Example rebuild for SDL_gpu backend (using global gpu_device):
-                // if (gpu_device) {
+                if (gpu_device) {
                 ImGui_ImplSDLGPU3_DestroyFontsTexture();
                 ImGui_ImplSDLGPU3_CreateFontsTexture();
-                //}
+                }
             }
             else
             {
-                // UI_Log("Font file '%s' not found. Using default ImGui font.", font_path); // Optional: Log font not found
+                UI_Log("Font file '%s' not found. Using default ImGui font.", ui_font_path); // Optional: Log font not found
             }
 
-            ui_fonts_loaded = true; // Mark that font loading has been attempted (successfully or not) to prevent future attempts.
-        }
-    }
-}
-
-static const SDL_DialogFileFilter filters[] = {
-    {"NES ROMs", "nes;fds;unif;nes2;ines"},
-    {"Archives", "zip;7z;rar"}, // REFACTOR-NOTE: Archive handling would need external libraries. This filter is just for selection.
-    {"All files", "*"}};
-
-static void SDLCALL FileDialogCallback(void *userdata, const char *const *filelist, int filter_index)
-{
-    if (!filelist || !*filelist)
-    {
-        if (SDL_GetError() && strlen(SDL_GetError()) > 0)
-        {
-            DEBUG_ERROR("SDL File Dialog Error: %s", SDL_GetError());
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "File Dialog Error", SDL_GetError(), window);
-        }
-        else
-        {
-            DEBUG_WARN("No file selected or dialog cancelled.");
-        }
-        return;
-    }
-
-    const char *selected_file = *filelist;
-    if (selected_file)
-    {
-        UI_Log("File selected via dialog: %s", selected_file);
-        strncpy(ui_romPath, selected_file, sizeof(ui_romPath) - 1);
-        ui_romPath[sizeof(ui_romPath) - 1] = '\0';
-        UI_LoadRom((NES *)userdata, ui_romPath);
-    }
-}
-
-void UI_DrawFileMenu(NES *nes)
-{
-    if (igBeginMenu("File", true))
-    {
-        if (igMenuItem_Bool("Open ROM...", "Ctrl+O", false, true))
-        {
-            SDL_ShowOpenFileDialog(FileDialogCallback, nes, window, filters, SDL_arraysize(filters), NULL, false);
-        }
-
-        if (igBeginMenu("Recent ROMs", ui_recentRomsCount > 0))
-        {
-            for (int i = 0; i < ui_recentRomsCount; ++i)
-            {
-                char label[270];
-                const char *filename_display = strrchr(ui_recentRoms[i], '/');
-                if (!filename_display)
-                    filename_display = strrchr(ui_recentRoms[i], '\\');
-                filename_display = filename_display ? filename_display + 1 : ui_recentRoms[i];
-                snprintf(label, sizeof(label), "%d. %s", i + 1, filename_display);
-
-                if (igMenuItem_Bool(label, NULL, false, true))
-                {
-                    strncpy(ui_romPath, ui_recentRoms[i], sizeof(ui_romPath) - 1);
-                    ui_romPath[sizeof(ui_romPath) - 1] = '\0';
-                    UI_LoadRom(nes, ui_romPath);
-                }
-            }
-            igEndMenu();
-        }
-        igSeparator();
-        bool rom_loaded_for_state = nes && nes->rom;
-        if (igMenuItem_Bool("Save State...", "Ctrl+S", false, rom_loaded_for_state))
-        {
-            ui_openSaveStateModal = true;
-        }
-        if (igMenuItem_Bool("Load State...", "Ctrl+L", false, rom_loaded_for_state))
-        {
-            ui_openLoadStateModal = true;
-        }
-        igSeparator();
-        if (igMenuItem_Bool("Exit", "Alt+F4", false, true))
-        {
-            SDL_Event quit_event;
-            quit_event.type = SDL_EVENT_QUIT;
-            SDL_PushEvent(&quit_event);
-        }
-        igEndMenu();
-    }
-
-    // REFACTOR-NOTE: Save/Load state modals are placeholders. Actual implementation requires NES_SaveState/NES_LoadState.
-    if (ui_openSaveStateModal)
-    {
-        igOpenPopup_Str("Save State", 0);
-        if (igBeginPopupModal("Save State", &ui_openSaveStateModal, ImGuiWindowFlags_AlwaysAutoResize))
-        {
-            igText("Select Slot (0-9):");
-            igSameLine(0, 0);
-            igSetNextItemWidth(100);
-            igInputInt("##SaveSlot", &ui_selectedSaveLoadSlot, 1, 1, 0);
-            ui_selectedSaveLoadSlot = ui_selectedSaveLoadSlot < 0 ? 0 : (ui_selectedSaveLoadSlot > 9 ? 9 : ui_selectedSaveLoadSlot);
-
-            if (igButton("Save", (ImVec2){80, 0}))
-            {
-                UI_Log("Placeholder: Save state to slot %d for ROM: %s", ui_selectedSaveLoadSlot, nes->rom->name);
-                // if (nes) NES_SaveState(nes, ui_selectedSaveLoadSlot); // Actual call
-                ui_openSaveStateModal = false;
-                igCloseCurrentPopup();
-            }
-            igSameLine(0, 8);
-            if (igButton("Cancel", (ImVec2){80, 0}))
-            {
-                ui_openSaveStateModal = false;
-                igCloseCurrentPopup();
-            }
-            igEndPopup();
-        }
-    }
-    if (ui_openLoadStateModal)
-    {
-        igOpenPopup_Str("Load State", 0);
-        if (igBeginPopupModal("Load State", &ui_openLoadStateModal, ImGuiWindowFlags_AlwaysAutoResize))
-        {
-            igText("Select Slot (0-9):");
-            igSameLine(0, 0);
-            igSetNextItemWidth(100);
-            igInputInt("##LoadSlot", &ui_selectedSaveLoadSlot, 1, 1, 0);
-            ui_selectedSaveLoadSlot = ui_selectedSaveLoadSlot < 0 ? 0 : (ui_selectedSaveLoadSlot > 9 ? 9 : ui_selectedSaveLoadSlot);
-
-            if (igButton("Load", (ImVec2){80, 0}))
-            {
-                UI_Log("Placeholder: Load state from slot %d for ROM: %s", ui_selectedSaveLoadSlot, nes->rom->name);
-                // if (nes) NES_LoadState(nes, ui_selectedSaveLoadSlot); // Actual call
-                ui_openLoadStateModal = false;
-                igCloseCurrentPopup();
-            }
-            igSameLine(0, 8);
-            if (igButton("Cancel", (ImVec2){80, 0}))
-            {
-                ui_openLoadStateModal = false;
-                igCloseCurrentPopup();
-            }
-            igEndPopup();
+            //ui_fonts_loaded = true; // Mark that font loading has been attempted (successfully or not) to prevent future attempts.
         }
     }
 }
@@ -877,12 +701,12 @@ void UI_MemoryViewer(NES *nes)
 
         if (igBeginTable("MemoryTable", 17, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit, (ImVec2){0, 0}, 0))
         {
-            igTableSetupColumn("Addr", ImGuiTableColumnFlags_WidthFixed, igGetFontSize() * 4.5f, 0);
+            igTableSetupColumn("Addr", ImGuiTableColumnFlags_WidthFixed, igGetFontSize() * 2.5f, 0);
             for (int i = 0; i < 16; i++)
             {
                 char colName[4];
                 snprintf(colName, sizeof(colName), "%X", i);
-                igTableSetupColumn(colName, ImGuiTableColumnFlags_WidthFixed, igGetFontSize() * 2.5f, 0);
+                igTableSetupColumn(colName, ImGuiTableColumnFlags_WidthStretch, igGetFontSize() * 2.0f, 0);
             }
             igTableHeadersRow();
 
@@ -1003,7 +827,7 @@ void UI_DrawDisassembler(NES *nes)
 
                 igTableSetColumnIndex(2);
                 uint16_t prev_addr_iter = addr_iter;
-                addr_iter = disassemble(nes, addr_iter, disasm_buf, sizeof(disasm_buf)); // disassemble should return next instruction's address
+                //addr_iter = disassemble(nes, addr_iter, disasm_buf, sizeof(disasm_buf)); // disassemble should return next instruction's address
                 igTextUnformatted(disasm_buf, NULL);
 
                 if (addr_iter <= prev_addr_iter && i < 31)
@@ -1029,16 +853,16 @@ void UI_DrawDisassembler(NES *nes)
 
 void UI_ToggleFullscreen()
 {
-    ui_sdl_fullscreen = !ui_sdl_fullscreen;
+    ui_fullscreen = !ui_fullscreen;
     // SDL_SetWindowFullscreen takes SDL_bool (SDL_TRUE/SDL_FALSE)
-    if (SDL_SetWindowFullscreen(window, ui_sdl_fullscreen ? true : false) != 0)
+    if (SDL_SetWindowFullscreen(ui_window, ui_fullscreen ? true : false) != 0)
     {
         UI_Log("Error toggling fullscreen: %s", SDL_GetError());
-        ui_sdl_fullscreen = !ui_sdl_fullscreen; // Revert state on error
+        ui_fullscreen = !ui_fullscreen; // Revert state on error
     }
     else
     {
-        UI_Log("Toggled fullscreen to: %s", ui_sdl_fullscreen ? "ON" : "OFF");
+        UI_Log("Toggled fullscreen to: %s", ui_fullscreen ? "ON" : "OFF");
     }
 }
 
@@ -1053,8 +877,8 @@ void UI_Init()
 
     // REFACTOR-NOTE: Window flags: Removed SDL_WINDOW_OPENGL. SDL_WINDOW_RESIZABLE and SDL_WINDOW_MAXIMIZED are good.
     // Consider SDL_WINDOW_HIGH_PIXEL_DENSITY for HiDPI displays if desired.
-    window = SDL_CreateWindow("cNES Emulator (SDL3_gpu)", 1280, 720, SDL_WINDOW_RESIZABLE | SDL_WINDOW_MAXIMIZED | SDL_WINDOW_HIGH_PIXEL_DENSITY);
-    if (!window)
+    ui_window = SDL_CreateWindow("cNES Emulator (SDL3_gpu)", 1280, 720, SDL_WINDOW_RESIZABLE | SDL_WINDOW_MAXIMIZED | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+    if (!ui_window)
     {
         DEBUG_FATAL("Could not create window: %s", SDL_GetError());
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Window Creation Error", SDL_GetError(), NULL);
@@ -1073,22 +897,22 @@ void UI_Init()
     if (!gpu_device)
     {
         DEBUG_FATAL("Unable to create GPU Device: %s", SDL_GetError());
-        SDL_DestroyWindow(window);
+        SDL_DestroyWindow(ui_window);
         SDL_Quit();
         exit(1);
     }
 
     // Claim window for GPU Device
-    if (!SDL_ClaimWindowForGPUDevice(gpu_device, window))
+    if (!SDL_ClaimWindowForGPUDevice(gpu_device, ui_window))
     {
         DEBUG_FATAL("Unable to claim window for GPU: %s", SDL_GetError());
         SDL_DestroyGPUDevice(gpu_device);
-        SDL_DestroyWindow(window);
+        SDL_DestroyWindow(ui_window);
         SDL_Quit();
         exit(1);
     }
     // REFACTOR-NOTE: SDL_GPU_PRESENTMODE_MAILBOX is good for low latency. FIFO is vsync. IMMEDIATE is no vsync (tearing).
-    SDL_SetGPUSwapchainParameters(gpu_device, window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, SDL_GPU_PRESENTMODE_MAILBOX);
+    SDL_SetGPUSwapchainParameters(gpu_device, ui_window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, SDL_GPU_PRESENTMODE_MAILBOX);
 
     // Setup Dear ImGui context
     ImGuiContext *ctx = igCreateContext(NULL);
@@ -1108,10 +932,10 @@ void UI_Init()
     }
 
     // Setup Platform/Renderer backends for SDL_gpu
-    ImGui_ImplSDL3_InitForSDLGPU(window); // SDL3 platform backend
+    ImGui_ImplSDL3_InitForSDLGPU(ui_window); // SDL3 platform backend
     ImGui_ImplSDLGPU3_InitInfo init_info = {0};
     init_info.Device = gpu_device;
-    init_info.ColorTargetFormat = SDL_GetGPUSwapchainTextureFormat(gpu_device, window);
+    init_info.ColorTargetFormat = SDL_GetGPUSwapchainTextureFormat(gpu_device, ui_window);
     init_info.MSAASamples = SDL_GPU_SAMPLECOUNT_1; // No MSAA for ImGui by default
     ImGui_ImplSDLGPU3_Init(&init_info);            // SDL_gpu renderer backend
 
@@ -1120,67 +944,6 @@ void UI_Init()
     Profiler_Init(); // Initialize Profiler
 
     UI_Log("cEMU Initialized with SDL3_gpu. Welcome!");
-}
-
-void UI_SettingsWindow(NES *nes)
-{
-    if (!ui_showSettingsWindow)
-        return;
-
-    igSetNextWindowSize((ImVec2){480, 400}, ImGuiCond_FirstUseEver);
-    if (igBegin("Settings", &ui_showSettingsWindow, ImGuiWindowFlags_None))
-    {
-        if (igBeginTabBar("SettingsTabs", 0))
-        {
-            if (igBeginTabItem("Display", NULL, 0))
-            {
-                igText("Theme:");
-                igSameLine(0, 5);
-                if (igRadioButton_Bool("Dark", ui_current_theme == UI_THEME_DARK))
-                    UI_ApplyTheme(UI_THEME_DARK);
-                igSameLine(0, 5);
-                if (igRadioButton_Bool("Light", ui_current_theme == UI_THEME_LIGHT))
-                    UI_ApplyTheme(UI_THEME_LIGHT);
-                igSeparator();
-                if (igCheckbox("Fullscreen (Window)", &ui_sdl_fullscreen))
-                    UI_ToggleFullscreen();
-                igSameLine(0, 10);
-                igTextDisabled("(F11)");
-                // REFACTOR-NOTE: Add font scaling options, game screen aspect ratio/scaling options here.
-                igTextDisabled("More display settings (font, scaling) can be added here.");
-                igEndTabItem();
-            }
-            if (igBeginTabItem("Audio", NULL, 0))
-            {
-                // REFACTOR-NOTE: Connect this to actual APU volume control.
-                if (igSliderFloat("Master Volume", &ui_master_volume, 0.0f, 1.0f, "%.2f", 0))
-                {
-                    // if (nes && nes->apu) APU_SetMasterVolume(nes->apu, ui_master_volume);
-                    UI_Log("Master volume (placeholder) set to: %.2f", ui_master_volume);
-                }
-                // REFACTOR-NOTE: Add options for audio buffer size, sample rate, APU channel toggles.
-                igTextDisabled("More audio settings (buffer, channels) can be added here.");
-                igEndTabItem();
-            }
-            if (igBeginTabItem("Input", NULL, 0))
-            {
-                igText("Controller 1 Mapping (NES):");
-                igText("Up: W, Down: S, Left: A, Right: D");
-                igText("A: K, B: J, Select: RShift, Start: Enter");
-                igSeparator();
-                igTextDisabled("TODO: Add remappable key bindings UI for Controller 1 & 2.");
-                // REFACTOR-NOTE: Implement a visual key mapping UI.
-                igEndTabItem();
-            }
-            // REFACTOR-NOTE: Add "Paths" tab for save states, screenshots, default ROMs directory.
-            // REFACTOR-NOTE: Add "Advanced" tab for emulation tweaks (e.g., CPU/PPU cycle accuracy options if available).
-            igEndTabBar();
-        }
-        igSeparator();
-        if (igButton("Close", (ImVec2){-FLT_MIN, 0}))
-            ui_showSettingsWindow = false;
-    }
-    igEnd();
 }
 
 void UI_DrawAboutWindow()
@@ -1333,26 +1096,6 @@ void UI_DrawLicenceWindow()
     igEnd();
 }
 
-static void UI_ShowAllDebugWindows()
-{
-    ui_showCpuWindow = true;
-    ui_showPpuViewer = true;
-    ui_showMemoryViewer = true;
-    ui_showLog = true;
-    ui_showDisassembler = true;
-    ui_showProfilerWindow = true; // Show profiler too
-}
-
-static void UI_HideAllDebugWindows()
-{
-    ui_showCpuWindow = false;
-    ui_showPpuViewer = false;
-    ui_showMemoryViewer = false;
-    // ui_showLog = false; // Log is often useful to keep visible
-    ui_showDisassembler = false;
-    ui_showProfilerWindow = false; // Hide profiler too
-}
-
 static void UI_DebugToolbar(NES *nes)
 {
     if (!ui_showToolbar)
@@ -1363,7 +1106,7 @@ static void UI_DebugToolbar(NES *nes)
     { // Removed restrictive flags to allow docking/resizing
         const char *pause_label = ui_paused ? "Resume (F6)" : "Pause (F6)";
         if (igButton(pause_label, (ImVec2){0, 0}))
-            UI_TogglePause(nes);
+        ui_paused = !ui_paused;
         igSameLine(0, 4);
         if (igButton("Step CPU (F7)", (ImVec2){0, 0}))
         {
@@ -1376,13 +1119,13 @@ static void UI_DebugToolbar(NES *nes)
         if (igButton("Step Frame (F8)", (ImVec2){0, 0}))
         {
             if (ui_paused && nes)
-                UI_StepFrame(nes);
+                NES_StepFrame(nes);
             else
                 UI_Log("Can only step frame when paused.");
         }
         igSameLine(0, 4);
         if (igButton("Reset (F5)", (ImVec2){0, 0}))
-            UI_Reset(nes);
+            NES_Reset(nes);
 
         igSeparator(); // Visually separate control groups
 
@@ -1398,27 +1141,6 @@ static void UI_DebugToolbar(NES *nes)
         igCheckbox("Disasm", &ui_showDisassembler);
     }
     igEnd();
-}
-
-static void UI_DrawDebugMenu()
-{
-    if (igBeginMenu("Debug", true))
-    {
-        igMenuItem_Bool("CPU Registers", NULL, &ui_showCpuWindow, true);
-        igMenuItem_Bool("PPU Viewer", NULL, &ui_showPpuViewer, true);
-        igMenuItem_Bool("Memory Viewer", NULL, &ui_showMemoryViewer, true);
-        igMenuItem_Bool("Log Window", NULL, &ui_showLog, true);
-        igMenuItem_Bool("Disassembler", NULL, &ui_showDisassembler, true);
-        igMenuItem_Bool("Profiler", NULL, &ui_showProfilerWindow, true); // Added Profiler toggle
-        igSeparator();
-        igMenuItem_Bool("Debug Controls Window", NULL, &ui_showToolbar, true); // Renamed from Toolbar
-        igSeparator();
-        if (igMenuItem_Bool("Show All Debug Windows", NULL, false, true))
-            UI_ShowAllDebugWindows();
-        if (igMenuItem_Bool("Hide All Debug Windows", NULL, false, true))
-            UI_HideAllDebugWindows();
-        igEndMenu();
-    }
 }
 
 static void UI_CpuWindow(NES *nes)
@@ -1468,73 +1190,6 @@ static void UI_CpuWindow(NES *nes)
         // REFACTOR-NOTE: Add instruction timing/cycle count for current/last instruction (requires more detailed CPU state).
     }
     igEnd();
-}
-
-void UI_DrawMainMenuBar(NES *nes)
-{
-    if (igBeginMainMenuBar())
-    {
-        UI_DrawFileMenu(nes);
-        if (igBeginMenu("Emulation", true))
-        {
-            bool rom_loaded = nes && nes->rom && nes->rom;
-            if (igMenuItem_Bool(ui_paused ? "Resume " : "Pause", "F6", false, rom_loaded))
-                UI_TogglePause(nes);
-            if (igMenuItem_Bool("Reset", "F5", false, rom_loaded))
-                UI_Reset(nes);
-            if (igMenuItem_Bool("Step CPU Instruction", "F7", false, rom_loaded && ui_paused))
-            {
-                if (nes && nes->cpu)
-                    NES_Step(nes);
-            }
-            if (igMenuItem_Bool("Step Frame", "F8", false, rom_loaded && ui_paused))
-                UI_StepFrame(nes);
-            // REFACTOR-NOTE: Add speed controls (e.g., 50%, 100%, 200%, turbo mode). Would require timing adjustments in main loop.
-            igEndMenu();
-        }
-        if (igBeginMenu("View", true))
-        {
-            if (igMenuItem_Bool("Game Screen", NULL, ui_showGameScreen, true))
-                ui_showGameScreen = !ui_showGameScreen;
-            if (igMenuItem_Bool("CPU Registers", NULL, ui_showCpuWindow, true))
-                ui_showCpuWindow = !ui_showCpuWindow;
-            if (igMenuItem_Bool("PPU Viewer", NULL, ui_showPpuViewer, true))
-                ui_showPpuViewer = !ui_showPpuViewer;
-            if (igMenuItem_Bool("Memory Viewer", NULL, ui_showMemoryViewer, true))
-                ui_showMemoryViewer = !ui_showMemoryViewer;
-            if (igMenuItem_Bool("Disassembler", NULL, ui_showDisassembler, true))
-                ui_showDisassembler = !ui_showDisassembler;
-            if (igMenuItem_Bool("Log Window", NULL, ui_showLog, true))
-                ui_showLog = !ui_showLog;
-            if (igMenuItem_Bool("Debug Controls", NULL, ui_showToolbar, true))
-                ui_showToolbar = !ui_showToolbar;
-            if (igMenuItem_Bool("Profiler", NULL, ui_showProfilerWindow, true))
-                ui_showProfilerWindow = !ui_showProfilerWindow;
-            igSeparator();
-            if (igMenuItem_Bool("Toggle Fullscreen", "F11", ui_sdl_fullscreen, true))
-                UI_ToggleFullscreen();
-            igEndMenu();
-        }
-        UI_DrawDebugMenu();
-        if (igBeginMenu("Options", true))
-        {
-            if (igMenuItem_Bool("Settings...", "F10", ui_showSettingsWindow, true))
-                ui_showSettingsWindow = !ui_showSettingsWindow;
-            igEndMenu();
-        }
-        if (igBeginMenu("Help", true))
-        {
-            if (igMenuItem_Bool("About", NULL, false, true))
-                ui_showAboutWindow = true;
-            if (igMenuItem_Bool("Credits", NULL, false, true))
-                ui_showCreditsWindow = true;
-            if (igMenuItem_Bool("Licence", NULL, false, true))
-                ui_showLicenceWindow = true;
-            // REFACTOR-NOTE: Add "View Controls" or "Help Topics" menu item with keybinds, basic usage.
-            igEndMenu();
-        }
-        igEndMainMenuBar();
-    }
 }
 
 void UI_GameScreenWindow(NES *nes)
@@ -1724,7 +1379,7 @@ static ImU32 GetColorForString(const char *str)
     }
     // Mix the hash to get more varied colors
     hash = (hash ^ (hash >> 16)) * 0x85ebca6b;
-    hash = (hash ^ (hash >> 13)) * 0xc2b2ae35;
+    hash = (hash ^ (hash >>  13)) * 0xc2b2ae35;
     hash = (hash ^ (hash >> 16));
 
     // Ensure reasonable brightness and alpha
@@ -1742,186 +1397,141 @@ static ImU32 GetColorForString(const char *str)
 
 void UI_Profiler_DrawWindow(Profiler *profiler)
 {
-    if (!profiler || !ui_showProfilerWindow)
-    {
-        return;
-    }
+    if (!profiler || !ui_showProfilerWindow) return;
 
-    igSetNextWindowSize((ImVec2){500, 440}, ImGuiCond_FirstUseEver); // Increased height slightly for new info
+    igSetNextWindowSize((ImVec2){600, 500}, ImGuiCond_FirstUseEver);
     if (igBegin("Profiler", &ui_showProfilerWindow, ImGuiWindowFlags_None))
     {
+        // Header info
         igText("FPS: %.1f", profiler->current_fps);
         igSameLine(0, 20);
-        igText("Frame Time: %.2f ms (Avg: %.2f ms, Max: %.2f ms)",
+        igText("Frame: %.2f ms (Avg: %.2f ms, Max: %.2f ms)",
                profiler->current_frame_time_ms,
                profiler->avg_frame_time_ms,
                profiler->max_frame_time_ms);
 
+        // Frame time plot
         if (ImPlot_BeginPlot("Frame Times", (ImVec2){-1, 150}, ImPlotFlags_None))
         {
-            ImPlot_SetupAxes("Frame Index (History)", "Time (ms)", ImPlotAxisFlags_Lock, ImPlotAxisFlags_AutoFit);
+            ImPlot_SetupAxes("Frame Index", "Time (ms)", ImPlotAxisFlags_Lock, ImPlotAxisFlags_AutoFit);
             ImPlot_SetupAxisLimits(ImAxis_X1, 0, PROFILER_HISTORY_SIZE - 1, ImGuiCond_Always);
-            // Automatic Y axis scaling or set manually:
-            // ImPlot_SetupAxisLimits(ImAxis_Y1, 0, profiler->max_frame_time_ms > 0 ? profiler->max_frame_time_ms * 1.2 : 33.0, ImGuiCond_Once);
 
-            // Need to pass data in a way ImPlot understands (e.g. array of X values, array of Y values)
-            // Or use the offset and stride version if data is contiguous.
-            // For now, let's make a simple X array.
             float x_values[PROFILER_HISTORY_SIZE];
-            for (int i = 0; i < PROFILER_HISTORY_SIZE; ++i)
-                x_values[i] = (float)i;
-
-            // ImPlot expects float arrays for PlotLine. We have double.
-            // We can either cast or use a temporary float buffer.
-            // For simplicity in this example, let's cast if the function allows, or use a temp buffer.
-            // ImPlot::PlotLine typically takes float*. Let's prepare a float buffer.
             float frame_times_float[PROFILER_HISTORY_SIZE];
-            for (int i = 0; i < PROFILER_HISTORY_SIZE; ++i)
-            {
-                // Shift data so current_frame_history_idx is the last point
+            
+            for (int i = 0; i < PROFILER_HISTORY_SIZE; i++) {
+                x_values[i] = (float)i;
                 int data_idx = (profiler->frame_history_idx + i) % PROFILER_HISTORY_SIZE;
-                frame_times_float[i] = (float)profiler->frame_times_ms[data_idx];
+                frame_times_float[i] = (float)profiler->frame_times[data_idx];
             }
 
-            ImPlot_PlotLine_FloatPtrFloatPtr("Frame Time (ms)", x_values, frame_times_float, PROFILER_HISTORY_SIZE, 0, 0, sizeof(float));
+            ImPlot_PlotLine_FloatPtrFloatPtr("Frame Time", x_values, frame_times_float, 
+                                           PROFILER_HISTORY_SIZE, 0, 0, sizeof(float));
             ImPlot_EndPlot();
         }
 
         igSeparator();
-        igText("Timed Sections (Last Frame):"); // Table now shows last frame's times for consistency with flame graph
+        igText("Section Statistics:");
 
-        if (igBeginTable("SectionsTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit, (ImVec2){0, 0}, 0))
+        // Section table
+        if (igBeginTable("SectionsTable", 6, 
+                        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | 
+                        ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_Sortable, 
+                        (ImVec2){0, 0}, 0))
         {
-            igTableSetupColumn("Section Name", 0, 0, 0);
-            igTableSetupColumn("Time (ms)", 0, 0, 0); // Current time from last frame
-            igTableSetupColumn("Avg (ms)", 0, 0, 0);  // Avg over history
-            igTableSetupColumn("Max (ms)", 0, 0, 0);  // Max over history
+            igTableSetupColumn("Section", ImGuiTableColumnFlags_WidthStretch, 0, 0);
+            igTableSetupColumn("Total (ms)", ImGuiTableColumnFlags_WidthFixed, 80, 1);
+            igTableSetupColumn("Calls", ImGuiTableColumnFlags_WidthFixed, 50, 2);
+            igTableSetupColumn("Avg (ms)", ImGuiTableColumnFlags_WidthFixed, 70, 3);
+            igTableSetupColumn("Max (ms)", ImGuiTableColumnFlags_WidthFixed, 70, 4);
+            igTableSetupColumn("Last (ms)", ImGuiTableColumnFlags_WidthFixed, 70, 5);
             igTableHeadersRow();
 
-            for (int i = 0; i < profiler->num_sections; ++i)
-            {
-                ProfilerSection *sec = &profiler->sections[i];
-                // Find this section in the last_frame_flame_items to get its most recent duration
-                // This is a bit inefficient; ideally, current_time_ms would be from the last completed frame.
-                // For simplicity, we'll use the sec->current_time_ms which is updated when its EndSection is called.
-                // If a section didn't run in the last frame, its current_time_ms might be from an older frame.
-                // The flame graph, however, will only show sections that ran in the last frame.
+            for (int i = 0; i < profiler->num_sections; i++) {
+                const ProfilerSection* sec = &profiler->sections[i];
+                
                 igTableNextRow(0, 0);
-                igTableSetColumnIndex(0);
-                igText("%s", sec->name);
-                igTableSetColumnIndex(1);
-                igText("%.3f", sec->current_time_ms); // This is the most recent measurement
-                igTableSetColumnIndex(2);
-                igText("%.3f", sec->avg_time_ms);
-                igTableSetColumnIndex(3);
-                igText("%.3f", sec->max_time_ms);
+                igTableSetColumnIndex(0); igText("%s", sec->name);
+                igTableSetColumnIndex(1); igText("%.3f", sec->total_time_this_frame_ms);
+                igTableSetColumnIndex(2); igText("%d", sec->call_count_this_frame);
+                igTableSetColumnIndex(3); igText("%.3f", sec->avg_time_ms);
+                igTableSetColumnIndex(4); igText("%.3f", sec->max_time_ms);
+                igTableSetColumnIndex(5); igText("%.3f", sec->current_time_ms);
             }
             igEndTable();
         }
 
         igSeparator();
-        igText("Flame Graph (Last Frame):");
+        igText("Flame Graph:");
 
-        ImDrawList *draw_list = igGetWindowDrawList();
+        // Flame graph
+        ImDrawList* draw_list = igGetWindowDrawList();
         ImVec2 canvas_pos;
         igGetCursorScreenPos(&canvas_pos);
         ImVec2 canvas_size;
         igGetContentRegionAvail(&canvas_size);
-        if (canvas_size.x < 50)
-            canvas_size.x = 50;
-        if (canvas_size.y < 50)
-            canvas_size.y = 50;
-
-        float flame_graph_height = 200; // Desired height for the flame graph area
-        if (flame_graph_height > canvas_size.y)
-            flame_graph_height = canvas_size.y;
-        canvas_size.y = flame_graph_height;
-
-        ImGuiWindow *current_window = igGetCurrentWindow();
+        
+        float flame_height = 200.0f;
+        if (canvas_size.y > flame_height) canvas_size.y = flame_height;
+        
         ImRect bb = {canvas_pos, {canvas_pos.x + canvas_size.x, canvas_pos.y + canvas_size.y}};
-        igItemSize_Rect(bb, 0.0f); // Reserve space for the custom drawing
-        if (!igItemAdd(bb, 0, NULL, ImGuiItemFlags_None))
-        {
-            igEnd();
-            return;
-        }
+        igItemSize_Rect(bb, 0.0f);
+        if (igItemAdd(bb, 0, NULL, ImGuiItemFlags_None)) {
+            // Background
+            ImDrawList_AddRectFilled(draw_list, canvas_pos, 
+                                   (ImVec2){canvas_pos.x + canvas_size.x, canvas_pos.y + canvas_size.y}, 
+                                   igGetColorU32_Col(ImGuiCol_FrameBg, 1.0f), 0.0f, 0);
 
-        ImDrawList_AddRectFilled(draw_list, canvas_pos, (ImVec2){canvas_pos.x + canvas_size.x, canvas_pos.y + canvas_size.y}, igGetColorU32_Col(ImGuiCol_FrameBg, 1.0f), 0.0f, 0);
+            if (profiler->flame_item_count > 0 && profiler->current_frame_time_ms > 0.001) {
+                float bar_height = 18.0f;
+                float bar_spacing = 2.0f;
+                float pixels_per_ms = canvas_size.x / (float)profiler->current_frame_time_ms;
 
-        if (profiler->last_frame_flame_items_count > 0 && profiler->current_frame_time_ms > 0.00001)
-        {
-            float bar_height = 18.0f;
-            float bar_padding_y = 2.0f;
-            float total_frame_time_ms = (float)profiler->current_frame_time_ms;
-            float pixels_per_ms = canvas_size.x / total_frame_time_ms;
+                for (int i = 0; i < profiler->flame_item_count; i++) {
+                    const FlameGraphItem* item = &profiler->flame_items[i];
+                    
+                    float x0 = canvas_pos.x + (float)item->start_time_ms * pixels_per_ms;
+                    float x1 = canvas_pos.x + (float)(item->start_time_ms + item->duration_ms) * pixels_per_ms;
+                    float y0 = canvas_pos.y + (float)item->depth * (bar_height + bar_spacing);
+                    float y1 = y0 + bar_height;
 
-            int max_depth = 0;
-            for (int i = 0; i < profiler->last_frame_flame_items_count; ++i)
-            {
-                if (profiler->last_frame_flame_items[i].depth > max_depth)
-                {
-                    max_depth = profiler->last_frame_flame_items[i].depth;
-                }
-            }
-            // Adjust canvas_size.y if needed based on max_depth, or scale bar_height
-            // For now, let's assume fixed bar_height and clip if it overflows canvas_size.y
+                    // Clipping
+                    if (x1 < canvas_pos.x || x0 > canvas_pos.x + canvas_size.x || 
+                        y1 < canvas_pos.y || y0 > canvas_pos.y + canvas_size.y) continue;
+                    
+                    x0 = (x0 < canvas_pos.x) ? canvas_pos.x : x0;
+                    x1 = (x1 > canvas_pos.x + canvas_size.x) ? canvas_pos.x + canvas_size.x : x1;
+                    y0 = (y0 < canvas_pos.y) ? canvas_pos.y : y0;
+                    y1 = (y1 > canvas_pos.y + canvas_size.y) ? canvas_pos.y + canvas_size.y : y1;
 
-            for (int i = 0; i < profiler->last_frame_flame_items_count; ++i)
-            {
-                FlameGraphItem *item = &profiler->last_frame_flame_items[i];
+                    if (x1 <= x0 || y1 <= y0) continue;
 
-                float x0 = canvas_pos.x + (float)item->start_time_ms * pixels_per_ms;
-                float x1 = canvas_pos.x + (float)(item->start_time_ms + item->duration_ms) * pixels_per_ms;
-                // Y position: top of the graph is depth 0. Deeper calls go downwards.
-                float y0 = canvas_pos.y + (float)item->depth * (bar_height + bar_padding_y);
-                float y1 = y0 + bar_height;
+                    ImU32 color = GetColorForString(item->name);
+                    ImDrawList_AddRectFilled(draw_list, (ImVec2){x0, y0}, (ImVec2){x1, y1}, 
+                                           color, 2.0f, ImDrawFlags_RoundCornersAll);
 
-                // Clip to canvas
-                if (x1 < canvas_pos.x || x0 > canvas_pos.x + canvas_size.x || y1 < canvas_pos.y || y0 > canvas_pos.y + canvas_size.y)
-                {
-                    continue;
-                }
-                x0 = (x0 < canvas_pos.x) ? canvas_pos.x : x0;
-                x1 = (x1 > canvas_pos.x + canvas_size.x) ? canvas_pos.x + canvas_size.x : x1;
-                y0 = (y0 < canvas_pos.y) ? canvas_pos.y : y0;
-                y1 = (y1 > canvas_pos.y + canvas_size.y) ? canvas_pos.y + canvas_size.y : y1;
+                    // Text
+                    ImVec2 text_size;
+                    igCalcTextSize(&text_size, item->name, NULL, false, 0.0f);
+                    if (x1 - x0 > text_size.x + 4.0f) {
+                        ImVec2 text_pos = {x0 + 2.0f, y0 + (bar_height - text_size.y) * 0.5f};
+                        ImDrawList_AddText_Vec2(draw_list, text_pos, 
+                                              igGetColorU32_Col(ImGuiCol_Text, 1.0f), 
+                                              item->name, NULL);
+                    }
 
-                if (x1 <= x0 || y1 <= y0)
-                    continue;
-
-                ImU32 color = GetColorForString(item->name);
-                ImDrawList_AddRectFilled(draw_list, (ImVec2){x0, y0}, (ImVec2){x1, y1}, color, 2.0f, ImDrawFlags_RoundCornersAll);
-
-                // Draw text if space permits
-                ImVec2 text_size;
-                igCalcTextSize(&text_size, item->name, NULL, false, 0.0f);
-
-                if (x1 - x0 > text_size.x + 4.0f)
-                { // Check if text fits
-                    ImVec2 text_pos = {x0 + 2.0f, y0 + (bar_height - igGetTextLineHeight()) / 2.0f};
-                    // Clip text to rect bounds
-                    ImVec4 clip_rect = {x0, y0, x1, y1};
-                    ImDrawList_AddText_Vec2(draw_list, text_pos, igGetColorU32_Col(ImGuiCol_Text, 1.0f), item->name, NULL);
-                }
-
-                // Tooltip
-                if (igIsMouseHoveringRect((ImVec2){x0, y0}, (ImVec2){x1, y1}, true))
-                {
-                    igBeginTooltip();
-                    igText("%s", item->name);
-                    igText("Time: %.3f ms", item->duration_ms);
-                    igText("Start: %.3f ms", item->start_time_ms);
-                    igText("Depth: %d", item->depth);
-                    igEndTooltip();
+                    // Tooltip
+                    if (igIsMouseHoveringRect((ImVec2){x0, y0}, (ImVec2){x1, y1}, true)) {
+                        igBeginTooltip();
+                        igText("%s", item->name);
+                        igText("Duration: %.3f ms", item->duration_ms);
+                        igText("Start: %.3f ms", item->start_time_ms);
+                        igText("Depth: %d", item->depth);
+                        igEndTooltip();
+                    }
                 }
             }
         }
-        else
-        {
-            igText("No data for flame graph or frame time is zero.");
-        }
-        // igDummy((ImVec2){0.0f, flame_graph_height}); // Consume the space if ItemSize/ItemAdd wasn't enough or for layout.
-        //  ItemSize + ItemAdd should be sufficient.
     }
     igEnd();
 }
@@ -2060,7 +1670,7 @@ void UI_Draw(NES *nes)
 
     // --- Modals and non-docked utility windows ---
     if (ui_showSettingsWindow)
-        UI_SettingsWindow(nes);
+        UI_SettingsMenu(nes);
     if (ui_showAboutWindow)
         UI_DrawAboutWindow();
     if (ui_showCreditsWindow)
@@ -2069,7 +1679,7 @@ void UI_Draw(NES *nes)
         UI_DrawLicenceWindow();
 
     // For debugging ImGui itself
-    igShowDemoWindow(NULL);
+    //igShowDemoWindow(NULL);
     // ImPlot_ShowDemoWindow(NULL); // For ImPlot debugging
 }
 
@@ -2077,7 +1687,7 @@ bool ui_quit_requested = false;
 
 void UI_Update(NES *nes)
 {
-    Profiler_BeginFrame(); // Profiler: Begin Frame
+    Profiler_BeginFrame();
 
     SDL_Event e;
     while (SDL_PollEvent(&e))
@@ -2088,7 +1698,7 @@ void UI_Update(NES *nes)
         {
             ui_quit_requested = true;
         }
-        if (e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && e.window.windowID == SDL_GetWindowID(window))
+        if (e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && e.window.windowID == SDL_GetWindowID(ui_window))
         {
             ui_quit_requested = true;
         }
@@ -2099,13 +1709,13 @@ void UI_Update(NES *nes)
             // bool alt_pressed = (SDL_GetModState() & KMOD_ALT); // For Alt+F4, handled by SDL_EVENT_QUIT usually
 
             if (e.key.key == SDLK_F5 && nes)
-                UI_Reset(nes);
+                NES_Reset(nes);
             if (e.key.key == SDLK_F6 && nes)
-                UI_TogglePause(nes);
+                ui_paused = !ui_paused;
             if (e.key.key == SDLK_F7 && nes && nes->cpu && ui_paused)
                 NES_Step(nes);
             if (e.key.key == SDLK_F8 && nes && ui_paused)
-                UI_StepFrame(nes);
+                NES_StepFrame(nes);
             if (e.key.key == SDLK_F10)
                 ui_showSettingsWindow = !ui_showSettingsWindow;
             if (e.key.key == SDLK_F11)
@@ -2113,7 +1723,7 @@ void UI_Update(NES *nes)
 
             if (ctrl_pressed && e.key.key == SDLK_O)
             {
-                SDL_ShowOpenFileDialog(FileDialogCallback, nes, window, filters, SDL_arraysize(filters), NULL, false);
+                //SDL_ShowOpenFileDialog(FileDialogCallback, nes, window, filters, SDL_arraysize(filters), NULL, false);
             }
             bool rom_loaded_for_state = nes && nes->rom;
             if (ctrl_pressed && e.key.key == SDLK_S && rom_loaded_for_state)
@@ -2138,34 +1748,58 @@ void UI_Update(NES *nes)
         return;
     }
 
+    if (ui_requestReload)
+    {
+        ui_requestReload = false;
+        UI_ApplyTheme(ui_current_theme);
+    }
+
     ImGui_ImplSDLGPU3_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     igNewFrame();
 
-    if (nes)
-    {
+    if (nes) {
         NES_SetController(nes, 0, nes_input_state[0]);
         NES_SetController(nes, 1, nes_input_state[1]);
 
-        if (!ui_paused)
-        {
-            int section_nes_step = Profiler_BeginSection("NES_StepFrame");
-            NES_StepFrame(nes);
-            Profiler_EndSection(section_nes_step);
+        if (!ui_paused) {
+            PROFILER_SCOPE("NES_Frame") {
+                int current_frame = nes->ppu->frame_odd;
+                
+                while (current_frame == nes->ppu->frame_odd) {
+                    // PPU steps
+                    PROFILER_SCOPE("PPU_Step") {
+                        for (int i = 0; i < 3; i++) {
+                            PPU_Step(nes->ppu);
+                        }
+                    }
+
+                    // NMI handling
+                    if (nes->ppu->nmi_interrupt_line) {
+                        PROFILER_SCOPE("CPU_NMI") {
+                            CPU_NMI(nes->cpu);
+                            nes->ppu->nmi_interrupt_line = 0;
+                        }
+                    }
+
+                    // CPU step
+                    PROFILER_SCOPE("CPU_Step") {
+                        if (CPU_Step(nes->cpu) == -1) {
+                            DEBUG_ERROR("CPU execution halted due to error");
+                        }
+                    }
+                }
+            }
         }
     }
 
-    // igShowDemoWindow(NULL); // Uncomment for ImGui debugging
-    int section_ui_draw = Profiler_BeginSection("UI_Draw");
-    UI_Draw(nes);
-    Profiler_EndSection(section_ui_draw);
+    PROFILER_SCOPE("UI_Draw") {
+        UI_Draw(nes);
+    }
 
-    // ImPlot_ShowDemoWindow(NULL); // Uncomment for ImPlot debugging
-
-    // Rendering with SDL_gpu
-    int section_imgui_render = Profiler_BeginSection("ImGui_Render");
-    igRender();
-    Profiler_EndSection(section_imgui_render);
+    PROFILER_SCOPE("ImGui_Render") {
+        igRender();
+    }
 
     ImDrawData *draw_data = igGetDrawData();
     const bool is_minimized = (draw_data->DisplaySize.x <= 0.0f || draw_data->DisplaySize.y <= 0.0f);
@@ -2175,7 +1809,7 @@ void UI_Update(NES *nes)
     if (command_buffer)
     {
         SDL_GPUTexture *swapchain_texture = NULL; // Must be initialized to NULL
-        SDL_AcquireGPUSwapchainTexture(command_buffer, window, &swapchain_texture, NULL, NULL);
+        SDL_AcquireGPUSwapchainTexture(command_buffer, ui_window, &swapchain_texture, NULL, NULL);
 
         if (swapchain_texture != NULL && !is_minimized)
         {
@@ -2233,7 +1867,7 @@ void UI_Update(NES *nes)
         igRenderPlatformWindowsDefault(NULL, NULL); // This should work with SDL_gpu backend
     }
 
-    Profiler_EndFrame(); // Profiler: End Frame
+    Profiler_EndFrame();
 }
 
 uint8_t UI_PollInput(int controller)
@@ -2309,10 +1943,10 @@ void UI_Shutdown()
     }
 
     // Destroy window and quit SDL
-    if (window)
+    if (ui_window)
     {
-        SDL_DestroyWindow(window);
-        window = NULL;
+        SDL_DestroyWindow(ui_window);
+        ui_window = NULL;
     }
     SDL_Quit();
 

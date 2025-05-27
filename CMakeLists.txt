@@ -19,6 +19,7 @@ add_executable(cNES
         src/debug.c 
         src/profiler.c 
         src/ui/ui.c 
+        src/ui/ui_menus.c
         src/ui/ui_style.c
         src/ui/cimgui_markdown.c 
         src/cNES/bus.c 
