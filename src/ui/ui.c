@@ -217,6 +217,15 @@ static void UI_HandleInputEvent(const SDL_Event *e)
 
 UI_Theme ui_current_theme = UI_THEME_DARK;
 
+static ImVec4 hexToVec4(unsigned int hex_color, float alpha) {
+    return (ImVec4){
+        ((hex_color >> 16) & 0xFF) / 255.0f,
+        ((hex_color >> 8) & 0xFF) / 255.0f,
+        (hex_color & 0xFF) / 255.0f,
+        alpha
+    };
+}
+
 void UI_ApplyTheme(UI_Theme theme)
 {
     ui_current_theme = theme;
@@ -231,81 +240,101 @@ void UI_ApplyTheme(UI_Theme theme)
         colors[ImGuiCol_TitleBgActive] = (ImVec4){0.82f, 0.82f, 0.82f, 1.00f};
         colors[ImGuiCol_MenuBarBg] = (ImVec4){0.86f, 0.86f, 0.86f, 1.00f};
         colors[ImGuiCol_Header] = (ImVec4){0.90f, 0.90f, 0.90f, 1.00f};
-        colors[ImGuiCol_Button] = (ImVec4){0.80f, 0.80f, 0.80f, 1.00f};
-        colors[ImGuiCol_ButtonHovered] = (ImVec4){0.70f, 0.70f, 0.70f, 1.00f};
-        colors[ImGuiCol_ButtonActive] = (ImVec4){0.60f, 0.60f, 0.60f, 1.00f};
+        colors[ImGuiCol_Button] = (ImVec4){0.2f, 0.5f, 0.8f, 1.0f};
+        colors[ImGuiCol_ButtonHovered] = (ImVec4){0.3f, 0.6f, 0.9f, 1.0f};
+        colors[ImGuiCol_ButtonActive] = (ImVec4){0.1f, 0.4f, 0.7f, 1.0f};
         colors[ImGuiCol_CheckMark] = (ImVec4){0.26f, 0.59f, 0.98f, 1.00f}; // A more distinct checkmark for light theme
         colors[ImGuiCol_SliderGrab] = (ImVec4){0.24f, 0.52f, 0.88f, 1.00f};
         colors[ImGuiCol_SliderGrabActive] = (ImVec4){0.26f, 0.59f, 0.98f, 1.00f};
     }
-    else
-    {                            // UI_THEME_DARK
-        igStyleColorsDark(NULL); // Start with default dark
-        colors[ImGuiCol_Text] = (ImVec4){1.00f, 1.00f, 1.00f, 1.00f};
-        colors[ImGuiCol_TextDisabled] = (ImVec4){0.50f, 0.50f, 0.50f, 1.00f};
-        colors[ImGuiCol_WindowBg] = (ImVec4){0.10f, 0.10f, 0.11f, 1.00f}; // Slightly bluish dark
-        colors[ImGuiCol_ChildBg] = (ImVec4){0.12f, 0.12f, 0.13f, 1.00f};
-        colors[ImGuiCol_PopupBg] = (ImVec4){0.08f, 0.08f, 0.09f, 0.94f};
-        colors[ImGuiCol_Border] = (ImVec4){0.43f, 0.43f, 0.50f, 0.50f};
-        colors[ImGuiCol_BorderShadow] = (ImVec4){0.00f, 0.00f, 0.00f, 0.00f};
-        colors[ImGuiCol_FrameBg] = (ImVec4){0.20f, 0.21f, 0.22f, 0.54f}; // Controls background
-        colors[ImGuiCol_FrameBgHovered] = (ImVec4){0.25f, 0.26f, 0.28f, 0.78f};
-        colors[ImGuiCol_FrameBgActive] = (ImVec4){0.30f, 0.31f, 0.33f, 1.00f};
-        colors[ImGuiCol_TitleBg] = (ImVec4){0.08f, 0.08f, 0.09f, 1.00f};       // Window title bar
-        colors[ImGuiCol_TitleBgActive] = (ImVec4){0.15f, 0.16f, 0.18f, 1.00f}; // Active window title bar
-        colors[ImGuiCol_TitleBgCollapsed] = (ImVec4){0.08f, 0.08f, 0.09f, 0.75f};
-        colors[ImGuiCol_MenuBarBg] = (ImVec4){0.14f, 0.15f, 0.16f, 1.00f};
-        colors[ImGuiCol_ScrollbarBg] = (ImVec4){0.02f, 0.02f, 0.02f, 0.53f};
-        colors[ImGuiCol_ScrollbarGrab] = (ImVec4){0.31f, 0.31f, 0.33f, 1.00f};
-        colors[ImGuiCol_ScrollbarGrabHovered] = (ImVec4){0.41f, 0.41f, 0.43f, 1.00f};
-        colors[ImGuiCol_ScrollbarGrabActive] = (ImVec4){0.51f, 0.51f, 0.53f, 1.00f};
-        colors[ImGuiCol_CheckMark] = (ImVec4){0.50f, 0.75f, 0.25f, 1.00f}; // Greenish checkmark
-        colors[ImGuiCol_SliderGrab] = (ImVec4){0.40f, 0.65f, 0.20f, 1.00f};
-        colors[ImGuiCol_SliderGrabActive] = (ImVec4){0.50f, 0.75f, 0.25f, 1.00f};
-        colors[ImGuiCol_Button] = (ImVec4){0.22f, 0.40f, 0.18f, 0.60f}; // Darker Greenish buttons
-        colors[ImGuiCol_ButtonHovered] = (ImVec4){0.28f, 0.50f, 0.24f, 1.00f};
-        colors[ImGuiCol_ButtonActive] = (ImVec4){0.32f, 0.58f, 0.28f, 1.00f};
-        colors[ImGuiCol_Header] = (ImVec4){0.20f, 0.38f, 0.16f, 0.58f}; // Collapsing header
-        colors[ImGuiCol_HeaderHovered] = (ImVec4){0.26f, 0.48f, 0.22f, 0.80f};
-        colors[ImGuiCol_HeaderActive] = (ImVec4){0.30f, 0.55f, 0.26f, 1.00f};
-        colors[ImGuiCol_Separator] = colors[ImGuiCol_Border];
-        colors[ImGuiCol_SeparatorHovered] = (ImVec4){0.40f, 0.60f, 0.20f, 0.78f};
-        colors[ImGuiCol_SeparatorActive] = (ImVec4){0.50f, 0.70f, 0.25f, 1.00f};
-        colors[ImGuiCol_ResizeGrip] = (ImVec4){0.44f, 0.70f, 0.20f, 0.30f};
-        colors[ImGuiCol_ResizeGripHovered] = (ImVec4){0.50f, 0.80f, 0.26f, 0.67f};
-        colors[ImGuiCol_ResizeGripActive] = (ImVec4){0.58f, 0.90f, 0.30f, 0.95f};
-        colors[ImGuiCol_Tab] = colors[ImGuiCol_Header];
-        colors[ImGuiCol_TabHovered] = colors[ImGuiCol_HeaderHovered];
-        // colors[ImGuiCol_TabActive]              = colors[ImGuiCol_HeaderActive];
-        // colors[ImGuiCol_TabUnfocused]           = igColorConvertU32ToFloat4(igGetColorU32_Col(ImGuiCol_Tab,1.0f) & 0x00FFFFFF | 0xDD000000); // More transparent
-        // colors[ImGuiCol_TabUnfocusedActive]     = igColorConvertU32ToFloat4(igGetColorU32_Col(ImGuiCol_TabActive,1.0f) & 0x00FFFFFF | 0xDD000000);
-        colors[ImGuiCol_DockingPreview] = colors[ImGuiCol_HeaderActive];
-        colors[ImGuiCol_DockingEmptyBg] = (ImVec4){0.20f, 0.20f, 0.20f, 1.00f};
-        colors[ImGuiCol_PlotLines] = (ImVec4){0.61f, 0.61f, 0.61f, 1.00f};
-        colors[ImGuiCol_PlotLinesHovered] = (ImVec4){1.00f, 0.43f, 0.35f, 1.00f};
-        colors[ImGuiCol_PlotHistogram] = (ImVec4){0.90f, 0.70f, 0.00f, 1.00f};
-        colors[ImGuiCol_PlotHistogramHovered] = (ImVec4){1.00f, 0.60f, 0.00f, 1.00f};
-        colors[ImGuiCol_TextSelectedBg] = (ImVec4){0.26f, 0.59f, 0.98f, 0.35f};
-        colors[ImGuiCol_DragDropTarget] = (ImVec4){1.00f, 1.00f, 0.00f, 0.90f};
-        // colors[ImGuiCol_NavHighlight]           = colors[ImGuiCol_HeaderHovered];
-        colors[ImGuiCol_NavWindowingHighlight] = (ImVec4){1.00f, 1.00f, 1.00f, 0.70f};
-        colors[ImGuiCol_NavWindowingDimBg] = (ImVec4){0.80f, 0.80f, 0.80f, 0.20f};
-        colors[ImGuiCol_ModalWindowDimBg] = (ImVec4){0.20f, 0.20f, 0.20f, 0.60f};
+    else        
+    {
+        igStyleColorsDark(NULL); // Start with default dark for base values
+        ImVec4 dt_text                 = hexToVec4(0xE2E8F0, 1.0f);
+        ImVec4 dt_text_disabled        = hexToVec4(0x718096, 1.0f);
+        ImVec4 dt_bg_main              = hexToVec4(0x1A202C, 1.0f);
+        ImVec4 dt_bg_secondary         = hexToVec4(0x2D3748, 1.0f);
+        ImVec4 dt_bg_frame             = hexToVec4(0x252C3B, 0.85f);
+        ImVec4 dt_border               = hexToVec4(0x4A5568, 0.7f);
+        ImVec4 dt_accent_primary       = hexToVec4(0x4299E1, 1.0f);
+        ImVec4 dt_accent_primary_hover = hexToVec4(0x3182CE, 1.0f);
+        ImVec4 dt_accent_primary_active= hexToVec4(0x2B6CB0, 1.0f);
+        ImVec4 dt_accent_secondary     = hexToVec4(0x38B2AC, 1.0f);
+        ImVec4 dt_accent_secondary_hover=hexToVec4(0x319795, 1.0f);
+        ImVec4 dt_accent_secondary_active=hexToVec4(0x2C7A7B, 1.0f);
+        colors[ImGuiCol_Text]                 = dt_text;
+        colors[ImGuiCol_TextDisabled]         = dt_text_disabled;
+        colors[ImGuiCol_WindowBg]             = dt_bg_main;
+        colors[ImGuiCol_ChildBg]              = dt_bg_main;
+        colors[ImGuiCol_PopupBg]              = dt_bg_secondary;
+        colors[ImGuiCol_Border]               = dt_border;
+        colors[ImGuiCol_BorderShadow]         = (ImVec4){0.00f, 0.00f, 0.00f, 0.00f};
+        colors[ImGuiCol_FrameBg]              = dt_bg_frame;
+        colors[ImGuiCol_FrameBgHovered]       = hexToVec4(0x313A4C, 0.9f); // Slightly more opaque hover
+        colors[ImGuiCol_FrameBgActive]        = hexToVec4(0x3A445D, 1.0f);
+        colors[ImGuiCol_TitleBg]              = hexToVec4(0x161A23, 1.0f); // Darker title
+        colors[ImGuiCol_TitleBgActive]        = dt_accent_primary;       // Active title is primary accent
+        colors[ImGuiCol_TitleBgCollapsed]     = hexToVec4(0x1A202C, 0.75f);
+        colors[ImGuiCol_MenuBarBg]            = dt_bg_secondary;
+        colors[ImGuiCol_ScrollbarBg]          = hexToVec4(0x171923, 0.53f);
+        colors[ImGuiCol_ScrollbarGrab]        = hexToVec4(0x4A5568, 1.0f);
+        colors[ImGuiCol_ScrollbarGrabHovered] = hexToVec4(0x718096, 1.0f);
+        colors[ImGuiCol_ScrollbarGrabActive]  = hexToVec4(0xA0AEC0, 1.0f);
+        colors[ImGuiCol_CheckMark]            = dt_accent_secondary; // Teal checkmark
+        colors[ImGuiCol_SliderGrab]           = dt_accent_secondary;
+        colors[ImGuiCol_SliderGrabActive]     = dt_accent_secondary_active;
+        colors[ImGuiCol_Button]               = dt_accent_primary; // Blue buttons
+        colors[ImGuiCol_ButtonHovered]        = dt_accent_primary_hover;
+        colors[ImGuiCol_ButtonActive]         = dt_accent_primary_active;
+        colors[ImGuiCol_Header]               = (ImVec4){dt_accent_secondary.x, dt_accent_secondary.y, dt_accent_secondary.z, 0.6f}; // Teal headers
+        colors[ImGuiCol_HeaderHovered]        = (ImVec4){dt_accent_secondary_hover.x, dt_accent_secondary_hover.y, dt_accent_secondary_hover.z, 0.8f};
+        colors[ImGuiCol_HeaderActive]         = dt_accent_secondary_active;
+        colors[ImGuiCol_Separator]            = dt_border;
+        colors[ImGuiCol_SeparatorHovered]     = dt_accent_secondary_hover;
+        colors[ImGuiCol_SeparatorActive]      = dt_accent_secondary_active;
+        colors[ImGuiCol_ResizeGrip]           = (ImVec4){dt_accent_secondary.x, dt_accent_secondary.y, dt_accent_secondary.z, 0.30f};
+        colors[ImGuiCol_ResizeGripHovered]    = (ImVec4){dt_accent_secondary_hover.x, dt_accent_secondary_hover.y, dt_accent_secondary_hover.z, 0.67f};
+        colors[ImGuiCol_ResizeGripActive]     = dt_accent_secondary_active;
+        colors[ImGuiCol_Tab]                  = dt_bg_frame; // Tabs match frame bg
+        colors[ImGuiCol_TabHovered]           = (ImVec4){dt_accent_primary_hover.x, dt_accent_primary_hover.y, dt_accent_primary_hover.z, 0.4f}; // Subtle blue hover for tabs
+        //colors[ImGuiCol_TabActive]            = dt_accent_primary;      // Active tab is blue
+        //colors[ImGuiCol_TabUnfocused]         = dt_bg_frame;
+        //colors[ImGuiCol_TabUnfocusedActive]   = hexToVec4(dt_accent_primary.x, dt_accent_primary.y, dt_accent_primary.z, 0.6f);
+        colors[ImGuiCol_DockingPreview]       = (ImVec4){dt_accent_primary.x, dt_accent_primary.y, dt_accent_primary.z, 0.35f};
+        colors[ImGuiCol_DockingEmptyBg]       = hexToVec4(0x2D3748, 1.0f);
+        colors[ImGuiCol_PlotLines]            = hexToVec4(0x90CDF4, 1.0f); // Lighter blue for plot lines
+        colors[ImGuiCol_PlotLinesHovered]     = hexToVec4(0x63B3ED, 1.0f);
+        colors[ImGuiCol_PlotHistogram]        = hexToVec4(0xF6AD55, 1.0f); // Orange
+        colors[ImGuiCol_PlotHistogramHovered]= hexToVec4(0xED8936, 1.0f);
+        colors[ImGuiCol_TextSelectedBg]       = (ImVec4){dt_accent_primary.x, dt_accent_primary.y, dt_accent_primary.z, 0.35f};
+        colors[ImGuiCol_DragDropTarget]       = hexToVec4(0xF6E05E, 0.90f); // Yellow
+        //colors[ImGuiCol_NavHighlight]         = hexToVec4(dt_accent_secondary.x, dt_accent_secondary.y, dt_accent_secondary.z, 0.7f); // Teal for nav highlight
+        colors[ImGuiCol_NavWindowingHighlight]= hexToVec4(0xFFFFFF, 0.70f);
+        colors[ImGuiCol_NavWindowingDimBg]    = hexToVec4(0x808080, 0.20f);
+        colors[ImGuiCol_ModalWindowDimBg]     = hexToVec4(0x1A202C, 0.65f); // Darker dim
     }
 
-    style->WindowRounding = 4.0f;
-    style->FrameRounding = 4.0f;
-    style->GrabRounding = 4.0f;
-    style->PopupRounding = 4.0f;
-    style->ScrollbarRounding = 4.0f;
-    style->TabRounding = 4.0f;
-    style->WindowPadding = (ImVec2){8.0f, 8.0f};
-    style->FramePadding = (ImVec2){5.0f, 3.0f};
-    style->ItemSpacing = (ImVec2){8.0f, 4.0f};
-    style->ItemInnerSpacing = (ImVec2){4.0f, 4.0f};
-    style->IndentSpacing = 20.0f;
-    style->ScrollbarSize = 15.0f;
-    style->GrabMinSize = 12.0f;
+    // --- Apply Consistent Styling Attributes ---
+    style->WindowRounding    = 5.0f; // Soft rounded corners
+    style->FrameRounding     = 4.0f;
+    style->GrabRounding      = 4.0f;
+    style->PopupRounding     = 4.0f;
+    style->ScrollbarRounding = 6.0f;
+    style->TabRounding       = 4.0f;
+
+    style->WindowPadding     = (ImVec2){8.0f, 8.0f};
+    style->FramePadding      = (ImVec2){6.0f, 4.0f}; // Slightly more vertical padding in frames
+    style->ItemSpacing       = (ImVec2){8.0f, 5.0f}; // Increased vertical item spacing
+    style->ItemInnerSpacing  = (ImVec2){5.0f, 5.0f};
+    style->IndentSpacing     = 20.0f;
+    style->ScrollbarSize     = 15.0f;
+    style->GrabMinSize       = 12.0f;
+
+    style->WindowBorderSize = 1.0f;
+    style->FrameBorderSize  = 0.0f; // Keep frames clean, or 1.0f for bordered frames
+    style->PopupBorderSize  = 1.0f;
+    style->TabBorderSize    = 0.0f; // No border on tabs themselves, active tab color defines it
+
     // REFACTOR-NOTE: Font loading. If you have a preferred font, load it here.
     // Example using cimgui:
     // ioptr is the global ImGuiIO* (obtained via igGetIO())
@@ -329,6 +358,8 @@ void UI_ApplyTheme(UI_Theme theme)
                 ImFontGlyphRangesBuilder_AddRanges(builder, ImFontAtlas_GetGlyphRangesDefault(ioptr->Fonts));
                 ImFontGlyphRangesBuilder_AddChar(builder, 0xf04b); // Play Icon
                 ImFontGlyphRangesBuilder_AddChar(builder, 0xf04c); // Pause Icon
+                ImFontGlyphRangesBuilder_AddChar(builder, 0xf0c1); // Link Icon
+                ImFontGlyphRangesBuilder_AddChar(builder, 0xf08e); // Link Icon
                 ImVector_ImWchar *ranges = ImVector_ImWchar_create();
                 ImFontGlyphRangesBuilder_BuildRanges(builder, ranges);
                 ImFontAtlas_AddFontFromFileTTF(ioptr->Fonts, ui_font_path, ui_font_size, cfg, ranges->Data);
@@ -356,14 +387,6 @@ void UI_ApplyTheme(UI_Theme theme)
             //ui_fonts_loaded = true; // Mark that font loading has been attempted (successfully or not) to prevent future attempts.
         }
     }
-    SDL_GPUDevice *dev2 = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, false, NULL); // Recreate device to apply new theme
-    const char *gpu_name = SDL_GetGPUDeviceDriver(dev2);
-    printf("dev2 GPU driver: %s\n", gpu_name ? gpu_name : "Unknown");
-    const char *gpuasda_name = SDL_GetGPUDeviceDriver(gpu_device);
-    printf("gpu_device GPU driver: %s\n", gpuasda_name ? gpuasda_name : "Unknown");
-    //print dev2 addr and gpu_device addr
-    printf("dev2 address: %p\n", (void*)dev2);
-    printf("gpu_device address: %p\n", (void*)gpu_device);
 }
 
 void UI_LogWindow()
@@ -559,7 +582,7 @@ void UI_PPUViewer(NES *nes)
                 //              $3F00, $3F05, $3F06, $3F07 (for pal 1)
                 // Sprite palettes: $3F00 (or $3F10), $3F11, $3F12, $3F13 (for pal 0 / overall pal 4)
                 //                  $3F00 (or $3F10), $3F15, $3F16, $3F17 (for pal 1 / overall pal 5)
-                int base_offset = (ui_ppuViewerSelectedPalette < 4) ? (ui_ppuViewerSelectedPalette * 4) : // BG palettes start at 0x00, 0x04, 0x08, 0x0C
+                uint8_t base_offset = (ui_ppuViewerSelectedPalette < 4) ? (ui_ppuViewerSelectedPalette * 4) : // BG palettes start at 0x00, 0x04, 0x08, 0x0C
                                       (0x10 + (ui_ppuViewerSelectedPalette - 4) * 4);                     // Sprite palettes start at 0x10, 0x14, 0x18, 0x1C
                 palette_ram_idx = base_offset + i;
             }
@@ -618,9 +641,9 @@ void UI_PPUViewer(NES *nes)
                 uint8_t palette_idx_val = nes->ppu->palette[i];
                 uint32_t nes_col_abgr = master_nes_palette_abgr[palette_idx_val % 64];
                 ImVec4 im_col;                                           // RGBA for ImGui
-                im_col.x = ((nes_col_abgr & 0x000000FF)) / 255.0f;       // R
-                im_col.y = ((nes_col_abgr & 0x0000FF00) >> 8) / 255.0f;  // G
-                im_col.z = ((nes_col_abgr & 0x00FF0000) >> 16) / 255.0f; // B
+                im_col.x = (float)((nes_col_abgr & 0x000000FF)) / 255.0f;       // R
+                im_col.y = (float)((nes_col_abgr & 0x0000FF00) >> 8) / 255.0f;  // G
+                im_col.z = (float)((nes_col_abgr & 0x00FF0000) >> 16) / 255.0f; // B
                 im_col.w = 1.0f;
 
                 if (i > 0 && i % 16 == 0)
@@ -1260,6 +1283,14 @@ void UI_Profiler_DrawWindow(Profiler *profiler)
     igSetNextWindowSize((ImVec2){600, 500}, ImGuiCond_FirstUseEver);
     if (igBegin("Profiler", &ui_showProfilerWindow, ImGuiWindowFlags_None))
     {
+        bool profiler_enabled = Profiler_IsEnabled();
+
+        if (igCheckbox("Show Profiler", &profiler_enabled))
+        {
+            Profiler_Enable(profiler_enabled);
+            //ui_showProfilerWindow = profiler_enabled; // Close window if disabled
+        }
+
         // Header info
         igText("FPS: %.1f", profiler->current_fps);
         igSameLine(0, 20);
@@ -1312,13 +1343,14 @@ void UI_Profiler_DrawWindow(Profiler *profiler)
                 igTableSetColumnIndex(0); igText("%s", sec->name);
                 igTableSetColumnIndex(1); igText("%.3f", sec->total_time_this_frame_ms);
                 igTableSetColumnIndex(2); igText("%d", sec->call_count_this_frame);
-                igTableSetColumnIndex(3); igText("%.3f", sec->avg_time_ms);
-                igTableSetColumnIndex(4); igText("%.3f", sec->max_time_ms);
-                igTableSetColumnIndex(5); igText("%.3f", sec->current_time_ms);
+                //igTableSetColumnIndex(3); igText("%.3f", sec->avg_time_ms);
+                //igTableSetColumnIndex(4); igText("%.3f", sec->max_time_ms);
+                //igTableSetColumnIndex(5); igText("%.3f", sec->current_time_ms);
             }
             igEndTable();
         }
 
+        /*
         igSeparator();
         igText("Flame Graph:");
 
@@ -1389,7 +1421,7 @@ void UI_Profiler_DrawWindow(Profiler *profiler)
                     }
                 }
             }
-        }
+        }*/
     }
     igEnd();
 }
@@ -1405,7 +1437,11 @@ void UI_DrawStatusBar(NES *nes)
     if (igBegin("Status Bar", NULL, flags))
     {
         // FPS calculation is now handled by the profiler
-        ui_fps = Profiler_GetFPS();
+        if (ioptr->DeltaTime > FLT_MIN) { // FLT_MIN is from <float.h>
+            ui_fps = 1.0f / ioptr->DeltaTime; // Standard FPS calculation
+        } else {
+            ui_fps = 0.0f; // Avoid division by zero
+        }
 
         igText("FPS: %.1f | ROM: %s | %s", ui_fps, nes->rom ? nes->rom->name : "No ROM Loaded", ui_paused ? "Paused" : "Running");
 
@@ -1617,43 +1653,64 @@ void UI_Update(NES *nes)
         NES_SetController(nes, 1, nes_input_state[1]);
 
         if (!ui_paused) {
-            PROFILER_SCOPE("NES_Frame") {
-                int current_frame = nes->ppu->frame_odd;
-                
-                while (current_frame == nes->ppu->frame_odd) {
-                    // PPU steps
-                    PROFILER_SCOPE("PPU_Step") {
-                        for (int i = 0; i < 3; i++) {
-                            PPU_Step(nes->ppu);
-                        }
-                    }
 
-                    // NMI handling
-                    if (nes->ppu->nmi_interrupt_line) {
-                        PROFILER_SCOPE("CPU_NMI") {
-                            CPU_NMI(nes->cpu);
-                            nes->ppu->nmi_interrupt_line = 0;
-                        }
-                    }
+            static int p_nes_frame = 0;
+            static int cpu_frame = 0;
+            static int ppu_frame = 0;
+            static int cpu_nmi = 0;
 
-                    // CPU step
-                    PROFILER_SCOPE("CPU_Step") {
-                        if (CPU_Step(nes->cpu) == -1) {
-                            DEBUG_ERROR("CPU execution halted due to error");
-                        }
-                    }
+            if (p_nes_frame == 0) p_nes_frame = Profiler_CreateSection("NES_Frame");
+            if (cpu_frame == 0) cpu_frame = Profiler_CreateSection("CPU_Frame");
+            if (ppu_frame == 0) ppu_frame = Profiler_CreateSection("PPU_Frame");
+            if (cpu_nmi == 0) cpu_nmi = Profiler_CreateSection("CPU_NMI");
+
+            Profiler_BeginSectionByID(p_nes_frame);
+
+            int current_frame = nes->ppu->frame_odd;
+
+            while (current_frame == nes->ppu->frame_odd) {
+                // PPU steps
+
+                for (int i = 0; i < 3; i++) {
+                    Profiler_BeginSectionByID(ppu_frame);
+                    PPU_Step(nes->ppu);
+                    Profiler_EndSection(ppu_frame);
                 }
+
+                // NMI handling
+                if (nes->ppu->nmi_interrupt_line) {
+                    Profiler_BeginSectionByID(cpu_nmi);
+                    CPU_NMI(nes->cpu);
+                    nes->ppu->nmi_interrupt_line = 0;
+                    Profiler_EndSection(cpu_nmi);
+                }
+
+                // CPU step
+                Profiler_BeginSectionByID(cpu_frame);
+                if (CPU_Step(nes->cpu) == -1) {
+                    DEBUG_ERROR("CPU execution halted due to error");
+                }
+                Profiler_EndSection(cpu_frame);
             }
+            Profiler_EndSection(p_nes_frame);
         }
     }
 
-    PROFILER_SCOPE("UI_Draw") {
-        UI_Draw(nes);
-    }
+    static int p_ui_draw = 0;
+    static int p_ig_render = 0;
 
-    PROFILER_SCOPE("ImGui_Render") {
-        igRender();
-    }
+    if (p_ui_draw == 0) p_ui_draw = Profiler_CreateSection("UI_Draw");
+
+    if (p_ig_render == 0) p_ig_render = Profiler_CreateSection("IG_Render");
+    Profiler_BeginSectionByID(p_ui_draw);
+
+    UI_Draw(nes);
+
+    Profiler_EndSection(p_ui_draw);
+
+    Profiler_BeginSectionByID(p_ig_render);
+    igRender();
+    Profiler_EndSection(p_ig_render);
 
     ImDrawData *draw_data = igGetDrawData();
     const bool is_minimized = (draw_data->DisplaySize.x <= 0.0f || draw_data->DisplaySize.y <= 0.0f);
@@ -1667,7 +1724,6 @@ void UI_Update(NES *nes)
 
         if (swapchain_texture != NULL && !is_minimized)
         {
-            int section_sdl_render = Profiler_BeginSection("SDL_GPU_RenderPass");
             Imgui_ImplSDLGPU3_PrepareDrawData(draw_data, command_buffer);
             SDL_GPUColorTargetInfo target_info = {0}; // Important to zero-initialize
             target_info.texture = swapchain_texture;
@@ -1699,7 +1755,6 @@ void UI_Update(NES *nes)
             {
                 UI_Log("Failed to begin GPU render pass: %s", SDL_GetError());
             }
-            Profiler_EndSection(section_sdl_render);
         }
         else if (is_minimized)
         {
@@ -1720,7 +1775,6 @@ void UI_Update(NES *nes)
         igUpdatePlatformWindows();
         igRenderPlatformWindowsDefault(NULL, NULL); // This should work with SDL_gpu backend
     }
-
     Profiler_EndFrame();
 }
 

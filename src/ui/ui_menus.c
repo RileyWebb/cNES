@@ -585,31 +585,93 @@ void UI_DrawAboutWindow()
     if (!ui_showAboutWindow)
         return;
     
-    ImVec2 viewportSize = igGetMainViewport()->WorkSize;
-    ImVec2 windowSize = {viewportSize.x * 0.6f, viewportSize.y * 0.7f};
-    igSetNextWindowSize(windowSize, ImGuiCond_FirstUseEver);
-    igSetNextWindowPos((ImVec2){(viewportSize.x - windowSize.x) / 2, (viewportSize.y - windowSize.y) / 2}, ImGuiCond_FirstUseEver, (ImVec2){0, 0});
+    ImGuiViewport *viewport = igGetMainViewport();
+    ImVec2 viewportSize = viewport->WorkSize;
+    ImVec2 windowSize = {viewportSize.x * 2.0f / 3.0f, viewportSize.y * 2.0f / 3.0f};
+    igSetNextWindowSize(windowSize, ImGuiCond_Always);
     
-    if (igBegin("About cNES", &ui_showAboutWindow, ImGuiWindowFlags_None))
+    //TODO: refactor to popup
+
+    if (igBegin("About cNES", &ui_showAboutWindow, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove))
     {
         if (igBeginTabBar("AboutTabs", 0))
         {
             if (igBeginTabItem("About", NULL, 0))
             {
-                igText("cNES - A fast, versatile NES emulator.");
-                igText("Written in C with SDL3 and ImGui.");
-                igSeparator();
-                igText("Version: %s", CNES_VERSION_STRING);
-                igText("Build Date: %s", CNES_VERSION_BUILD_DATE);
-                igText("Author: Riley Webb");
-                igSeparator();
-                igText("Powered by Dear ImGui (cimgui bindings) and SDL3 with SDL_gpu.");
-                igSeparator();
+                // Center the content
+                ImVec2 content_region;
+                igGetContentRegionAvail(&content_region);
+                float window_width = content_region.x;
                 
-                if (igButton("Project on GitHub", (ImVec2){-FLT_MIN, 0}))
+                // Title section
+                ImVec2 title_size; 
+                igCalcTextSize(&title_size, "cNES", NULL, false, 0.0f);
+                igPushFont(NULL); // Use default font for now, could use larger font if available
+                float title_width = title_size.x;
+                igSetCursorPosX((window_width - title_width) * 0.5f);
+                igText("cNES");
+                igPopFont();
+                
+                // Subtitle
+                ImVec2 subtitle_size;
+                igCalcTextSize(&subtitle_size, "Nintendo Entertainment System Emulator", NULL, false, 0.0f);
+                float subtitle_width = subtitle_size.x;
+                igSetCursorPosX((window_width - subtitle_width) * 0.5f);
+                igTextColored((ImVec4){0.7f, 0.7f, 0.7f, 1.0f}, "Nintendo Entertainment System Emulator");
+                
+                igSpacing();
+                igSeparator();
+                igSpacing();
+                
+                // Version information in a clean layout
+                igColumns(2, "AboutColumns", false);
+                igSetColumnWidth(0, 140.0f);
+                
+                igText("Version:");
+                igNextColumn();
+                igText("%s", CNES_VERSION_STRING);
+                igNextColumn();
+                
+                igText("Build Date:");
+                igNextColumn();
+                igText("%s", CNES_VERSION_BUILD_DATE);
+                igNextColumn();
+                
+                igText("Author:");
+                igNextColumn();
+                igText("Riley Webb");
+                igColumns(1, NULL, false);
+                
+                igSpacing();
+                igSeparator();
+                igSpacing();
+                
+                // Description
+                igTextWrapped("A fast and versatile Nintendo Entertainment System emulator written in C. "
+                             "Features accurate CPU and PPU emulation with comprehensive debugging tools "
+                             "and a modern user interface.");
+                
+                igSpacing();
+                
+                // Technology stack
+                igText("Built with:");
+                igBulletText("SDL3 with GPU acceleration");
+                igBulletText("Dear ImGui (cimgui bindings)");
+                igBulletText("Cycle-accurate NES core");
+                
+                igSpacing();
+                igSeparator();
+                igSpacing();
+                
+                // Center the GitHub button
+                float button_width = 200.0f;
+                igSetCursorPosX((window_width - button_width) * 0.5f);
+                
+                if (igButton("View on GitHub", (ImVec2){button_width, 0}))
                 {
                     SDL_OpenURL("https://github.com/RileyWebb/cNES");
                 }
+                
                 igEndTabItem();
             }
             
@@ -653,6 +715,7 @@ void UI_DrawAboutWindow()
             {
                 ImGuiMarkdown_Config_Init(&mdConfig);
                 mdConfig.linkCallback = UI_MD_LinkCallback;
+                mdConfig.linkIcon = "\uf08e";
                 
                 if (credits_markdown)
                 {
@@ -694,5 +757,12 @@ void UI_DrawAboutWindow()
             igEndTabBar();
         }
     }
+    
+    ImVec2 viewport_center;
+    ImGuiViewport_GetCenter(&viewport_center, viewport);
+    ImVec2 window_size;
+    igGetWindowSize(&window_size);
+    igSetWindowPos_WindowPtr(igGetCurrentWindow(), (ImVec2){viewport_center.x - window_size.x * 0.5f, viewport_center.y - window_size.y * 0.5f}, ImGuiCond_Always);
+    
     igEnd();
 }

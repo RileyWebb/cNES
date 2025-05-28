@@ -477,7 +477,7 @@ void CPU_Destroy(CPU* cpu) {
 
 // --- Main CPU Step Function ---
 int CPU_Step(CPU *cpu) {
-    uint16_t initial_pc_debug = cpu->pc; // For debugging
+    //uint16_t initial_pc_debug = cpu->pc; // For debugging
 
     uint8_t opcode = BUS_Read(cpu->nes, cpu->pc++);
     Instruction inst = instruction_lookup[opcode];
@@ -485,9 +485,9 @@ int CPU_Step(CPU *cpu) {
     bool page_crossed_by_addr = false;
     uint16_t effective_address = 0;
 
-    if (inst.addressing_mode) {
+    //if (inst.addressing_mode) {
         effective_address = inst.addressing_mode(cpu, &page_crossed_by_addr);
-    }
+    //}
 
     uint8_t current_opcode_cycles = inst.cycles;
     if (page_crossed_by_addr && inst.add_cycles_on_page_cross) {
