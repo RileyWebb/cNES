@@ -477,15 +477,6 @@ void CPU_Destroy(CPU* cpu) {
 
 // --- Main CPU Step Function ---
 int CPU_Step(CPU *cpu) {
-    // Check for NMI before fetching an instruction
-    // NMI is edge-sensitive in hardware, but typically emulated by checking a level-triggered line
-    // once per instruction cycle. If the line is high, NMI is processed.
-    if (cpu->nes->ppu->nmi_interrupt_line) {
-        CPU_NMI(cpu); // Handles PC, stack, flags, and adds 7 cycles to cpu->total_cycles
-        //cpu->nes->ppu->nmi_interrupt_line = false; // Acknowledge/clear NMI signal from PPU
-        return 7; // NMI processing takes 7 CPU cycles
-    }
-
     //uint16_t initial_pc_debug = cpu->pc; // For debugging
 
     uint8_t opcode = BUS_Read(cpu->nes, cpu->pc++);

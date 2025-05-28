@@ -314,6 +314,13 @@ void UI_ApplyTheme(UI_Theme theme)
                 // Add font to the font atlas using cimgui.
                 // The ImFont* returned can be saved if you need to switch fonts using igPushFont/igPopFont.
                 ImFontConfig *cfg = ImFontConfig_ImFontConfig();
+
+                cfg->OversampleH = 1; // No horizontal oversampling
+                cfg->OversampleV = 1; // No vertical oversampling
+                cfg->PixelSnapH = true; // Enable pixel snapping for better alignment
+                cfg->GlyphMinAdvanceX = 0.0f; // No minimum advance width
+                cfg->GlyphMaxAdvanceX = FLT_MAX; // No maximum advance width
+
                 ImFontGlyphRangesBuilder *builder = ImFontGlyphRangesBuilder_ImFontGlyphRangesBuilder();
                 //cfg->MergeMode = true;
                 ImFontAtlas_Clear(ioptr->Fonts); // Clear existing fonts
@@ -884,7 +891,7 @@ void UI_Init()
         exit(1);
     }
 
-    gpu_device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV,
+    gpu_device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_METALLIB,
 #ifdef DEBUG
                                      true,
 #else
@@ -1399,9 +1406,23 @@ void UI_DrawStatusBar(NES *nes)
 {
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize;
 
+    const char *version_text = CNES_VERSION_BUILD_STRING; // REFACTOR-NOTE: Consistent versioning
+    ImVec2 version_text_size;
+    igCalcTextSize(&version_text_size, version_text, NULL, false, 0);
+
+    // Calculate status bar height based on current style (font size + frame padding)
+    // igGetFrameHeight() = FontSize + style.FramePadding.y * 2
+    float status_bar_height = igGetFrameHeight(); 
+
     ImGuiViewport *viewport = igGetMainViewport();
-    igSetNextWindowSize((ImVec2){viewport->WorkSize.x, 28}, ImGuiCond_Always);
-    igSetNextWindowPos((ImVec2){viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - 28}, ImGuiCond_Always, (ImVec2){0, 0});
+    // Ensure the status bar height is at least the text line height with spacing, plus a little extra if frame padding is small
+    float min_height = igGetTextLineHeightWithSpacing() + igGetStyle()->WindowPadding.y; // Ensure text fits comfortably
+    if (status_bar_height < min_height) {
+        status_bar_height = min_height;
+    }
+
+    igSetNextWindowSize((ImVec2){viewport->WorkSize.x, status_bar_height}, ImGuiCond_Always);
+    igSetNextWindowPos((ImVec2){viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - status_bar_height}, ImGuiCond_Always, (ImVec2){0, 0});
 
     if (igBegin("Status Bar", NULL, flags))
     {
@@ -1414,9 +1435,9 @@ void UI_DrawStatusBar(NES *nes)
 
         igText("FPS: %.1f | ROM: %s | %s", ui_fps, nes->rom ? nes->rom->name : "No ROM Loaded", ui_paused ? "Paused" : "Running");
 
-        const char *version_text = CNES_VERSION_BUILD_STRING; // REFACTOR-NOTE: Consistent versioning
-        ImVec2 version_text_size;
-        igCalcTextSize(&version_text_size, version_text, NULL, false, 0);
+        //const char *version_text = CNES_VERSION_BUILD_STRING; // REFACTOR-NOTE: Consistent versioning
+        //ImVec2 version_text_size;
+        //igCalcTextSize(&version_text_size, version_text, NULL, false, 0);
 
         ImVec2 content_avail;
         igGetContentRegionAvail(&content_avail);
@@ -1435,7 +1456,6 @@ void UI_DrawStatusBar(NES *nes)
     }
     igEnd();
 
-    // igSetWindowSize_Str("Status Bar", (ImVec2){igGetMainViewport()->WorkSize.x, 124}, ImGuiCond_Always);
 }
 
 void UI_Draw(NES *nes)
