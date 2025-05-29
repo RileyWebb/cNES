@@ -15,7 +15,7 @@
 int main(int argc, char **argv)
 {
     FILE *f_log = fopen("log.txt", "w");
-    D_LogRegister(f_log);
+    DEBUG_RegisterBuffer(f_log);
 
     DEBUG_INFO("Starting cNES");
 

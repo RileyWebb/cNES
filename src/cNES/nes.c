@@ -195,13 +195,7 @@ void NES_Step(NES *nes)
     for (int i = 0; i < 3; ++i) {
         PPU_Step(nes->ppu);
     }
-
-    // Handle NMI if triggered by PPU
-    if (nes->ppu->nmi_interrupt_line) {
-        CPU_NMI(nes->cpu);
-        nes->ppu->nmi_interrupt_line = 0; // Clear the NMI interrupt after CPU services it
-    }
-
+    
     // Step the CPU
     if (CPU_Step(nes->cpu) == -1) {
         DEBUG_ERROR("CPU execution halted due to error");

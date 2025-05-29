@@ -494,8 +494,16 @@ void PPU_WriteRegister(PPU *ppu, uint16_t addr, uint8_t value) {
             ppu->ctrl = value;
             ppu->nmi_output = (value & PPUCTRL_NMI_ENABLE) != 0;
             ppu->temp_addr = (ppu->temp_addr & 0xF3FF) | ((uint16_t)(value & 0x03) << 10);
+
+            // If NMI is enabled and VBlank is active (VBlank flag set and VBlank event occurred this frame),
+            // ensure the NMI line is asserted. This handles enabling NMI during VBlank.
             if (ppu->nmi_output && (ppu->status & PPUSTATUS_VBLANK) && ppu->nmi_occured) {
                 ppu->nmi_interrupt_line = true; 
+            }
+            // If NMI is disabled by this write, the NMI line must be deasserted.
+            // This ensures the NMI line accurately reflects the state of PPUCTRL bit 7.
+            if (!ppu->nmi_output) {
+                ppu->nmi_interrupt_line = false;
             }
             break;
 

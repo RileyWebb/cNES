@@ -42,13 +42,13 @@ static void SDLCALL FileDialogCallback(void *userdata, const char *const *fileli
     {
         if (NES_Load((NES *)userdata, ROM_LoadFile(selected_file)) == 0)
         {
-            UI_Log("Loaded ROM: %s", selected_file);
+            DEBUG_INFO("Loaded ROM: %s", selected_file);
             NES_Reset((NES *)userdata);
             // UI_AddRecentRom(path);
         }
         else
         {
-            UI_Log("Failed to load ROM: %s", selected_file);
+            DEBUG_WARN("Failed to load ROM: %s", selected_file);
         }
     }
 }
@@ -359,7 +359,7 @@ void UI_SettingsMenu(NES *nes)
                         if (nes->settings.cpu_region != (NES_Region)selected_region_idx) // NES_Region cast assumes it's an enum
                         {
                             nes->settings.cpu_region = (NES_Region)selected_region_idx;
-                            UI_Log("Region set to %s. A system reset (F5) is required for changes to take full effect.", region_items[selected_region_idx]);
+                            DEBUG_INFO("Region set to %s. A system reset (F5) is required for changes to take full effect.", region_items[selected_region_idx]);
                             // Consider adding a flag: ui_emulation_settings_changed_requires_reset = true;
                         }
                     }
@@ -372,7 +372,7 @@ void UI_SettingsMenu(NES *nes)
                     if (igCheckbox("Enable Sprite Limit", &sprite_limit_enabled))
                     {
                         //nes->settings->sprite_limit_enabled = sprite_limit_enabled;
-                        UI_Log("Sprite limit %s.", sprite_limit_enabled ? "enabled" : "disabled");
+                        DEBUG_INFO("Sprite limit %s.", sprite_limit_enabled ? "enabled" : "disabled");
                         // This setting can often be changed on-the-fly without a full reset.
                     }
                     igTextDisabled("Toggles the original NES 8-sprite-per-scanline hardware limitation. Disabling may reduce sprite flicker in some games.");
@@ -436,7 +436,7 @@ void UI_SettingsMenu(NES *nes)
                 if (igSliderFloat("Master Volume", &ui_master_volume, 0.0f, 1.0f, "%.2f", 0))
                 {
                     // if (nes && nes->apu) APU_SetMasterVolume(nes->apu, ui_master_volume);
-                    UI_Log("Master volume (placeholder) set to: %.2f", ui_master_volume);
+                    DEBUG_INFO("Master volume (placeholder) set to: %.2f", ui_master_volume);
                 }
                 // REFACTOR-NOTE: Add options for audio buffer size, sample rate, APU channel toggles.
                 igTextDisabled("More audio settings (buffer, channels) can be added here.");

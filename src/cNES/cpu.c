@@ -477,6 +477,15 @@ void CPU_Destroy(CPU* cpu) {
 
 // --- Main CPU Step Function ---
 int CPU_Step(CPU *cpu) {
+    // Check for NMI before fetching an instruction
+    // NMI is edge-sensitive in hardware, but typically emulated by checking a level-triggered line
+    // once per instruction cycle. If the line is high, NMI is processed.
+    if (cpu->nes->ppu->nmi_interrupt_line) {
+        CPU_NMI(cpu); // Handles PC, stack, flags, and adds 7 cycles to cpu->total_cycles
+        //cpu->nes->ppu->nmi_interrupt_line = false; // Acknowledge/clear NMI signal from PPU
+        return 7; // NMI processing takes 7 CPU cycles
+    }
+
     //uint16_t initial_pc_debug = cpu->pc; // For debugging
 
     uint8_t opcode = BUS_Read(cpu->nes, cpu->pc++);
@@ -578,7 +587,7 @@ static void CPU_OP_KIL(CPU *cpu, uint16_t address, uint8_t *cycles_ref) {
     // Typically halts the CPU. For emulation, you might loop indefinitely or set a halt flag.
     // For now, acts like a NOP that might take 2 cycles.
     // Or, if you have a halt flag: cpu->halted = true;
-    DEBUG_WARN("KIL instruction encountered at PC: %04X\n", cpu->pc -1);
+    DEBUG_WARN("KIL instruction encountered at PC: %04X\n", cpu->pc - 1);
 }
 
 static void CPU_OP_NOP(CPU *cpu, uint16_t address, uint8_t *cycles_ref) {
@@ -706,7 +715,7 @@ static void CPU_OP_SBX(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // (A 
     CPU_UpdateZeroNegativeFlags(cpu, cpu->x);
 }
 
-static void CPU_OP_SHX(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // X & (HighByte(addr) + 1) -> addr
+static void CPU_OP_SHX(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // Store X & (HighByte(addr) + 1) -> addr
     (void)cycles_ref;
     // This is complex due to how address is formed for write.
     // For ABSY: addr = base + Y. Write to (base + Y). Data = X & (HighByte(base+Y) + 1)
@@ -719,7 +728,7 @@ static void CPU_OP_SHX(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // X &
     BUS_Write(cpu->nes, address, data_to_write);
 }
 
-static void CPU_OP_SHY(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // Y & (HighByte(addr) + 1) -> addr
+static void CPU_OP_SHY(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // Store Y & (HighByte(addr) + 1) -> addr
     (void)cycles_ref;
     uint8_t high_byte_of_addr = (address >> 8) & 0xFF;
     uint8_t data_to_write = cpu->y & (high_byte_of_addr + 1);

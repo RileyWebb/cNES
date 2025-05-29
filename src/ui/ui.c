@@ -11,6 +11,7 @@
 #include <stdarg.h> // For va_list
 #include <float.h>  // For FLT_MIN
 #include <time.h>   // For logging timestamp
+#include <stdarg.h>
 
 #include "debug.h"
 #include "profiler.h"
@@ -34,9 +35,8 @@ ImGuiIO *ioptr;
 
 // --- UI State ---
 bool ui_paused = true;
-static char ui_romPath[256] = "";
-static char ui_logBuffer[8192] = ""; // REFACTOR-NOTE: Increased buffer size. Consider a circular buffer for very extensive logging.
-static int ui_logLen = 0;
+static debug_log ui_log_buffer[8192];
+static size_t ui_log_count = 0;
 static float ui_fps = 0.0f;
 float ui_master_volume = 0.8f;
 bool ui_fullscreen = false;
@@ -84,48 +84,11 @@ static SDL_GPUTransferBuffer *ppu_game_transfer_buffer = NULL; // Renamed to avo
 static SDL_GPUTextureSamplerBinding ppu_game_texture_sampler_binding = {0};
 
 // --- Helper: Append to log ---
-void UI_Log(const char *fmt, ...)
+void UI_Log(debug_log log)
 {
-    char time_buf[32];
-    time_t now_time = time(NULL);
-    struct tm *tm_info = localtime(&now_time); // REFACTOR-NOTE: Using localtime for human-readable time.
-    strftime(time_buf, sizeof(time_buf), "%H:%M:%S ", tm_info);
-    int time_len = strlen(time_buf);
-
-    int remaining_buf_space = sizeof(ui_logBuffer) - ui_logLen - 1; // -1 for null terminator
-
-    if (time_len < remaining_buf_space)
-    {
-        strncpy(ui_logBuffer + ui_logLen, time_buf, remaining_buf_space);
-        ui_logLen += time_len;
-        remaining_buf_space -= time_len;
-    }
-
-    va_list args;
-    va_start(args, fmt);
-    int n = vsnprintf(ui_logBuffer + ui_logLen, remaining_buf_space, fmt, args);
-    va_end(args);
-
-    if (n > 0)
-    {
-        ui_logLen += n;
-        if (ui_logLen > 0 && ui_logBuffer[ui_logLen - 1] != '\n' && ui_logLen < (int)sizeof(ui_logBuffer) - 2)
-        {
-            ui_logBuffer[ui_logLen++] = '\n';
-        }
-        ui_logBuffer[ui_logLen] = '\0';
-    }
-
-    if (ui_logLen >= (int)sizeof(ui_logBuffer) - 512)
-    { // Keep some buffer if close to full
-        DEBUG_WARN("Log buffer nearing capacity. Consider increasing size or implementing circular buffer.");
-        // Basic wrap-around: clear half the log to make space
-        int half_len = ui_logLen / 2;
-        memmove(ui_logBuffer, ui_logBuffer + half_len, ui_logLen - half_len);
-        ui_logLen -= half_len;
-        ui_logBuffer[ui_logLen] = '\0';
-        UI_Log("Log buffer was cleared partially to make space.");
-    }
+    //if (ui_log_count > )
+    ui_log_buffer[ui_log_count] = log;
+    ui_log_count++;
 }
 
 // --- Helper: Add to Recent ROMs ---
@@ -381,7 +344,7 @@ void UI_ApplyTheme(UI_Theme theme)
             }
             else
             {
-                UI_Log("Font file '%s' not found. Using default ImGui font.", ui_font_path); // Optional: Log font not found
+                DEBUG_WARN("Font file '%s' not found. Using default ImGui font.", ui_font_path); // Optional: Log font not found
             }
 
             //ui_fonts_loaded = true; // Mark that font loading has been attempted (successfully or not) to prevent future attempts.
@@ -397,8 +360,8 @@ void UI_LogWindow()
     {
         if (igButton("Clear", (ImVec2){0, 0}))
         {
-            ui_logLen = 0;
-            ui_logBuffer[0] = '\0';
+            memset(ui_log_buffer, 0, sizeof(debug_log) * ui_log_count);
+            ui_log_count = 0;
         }
         // REFACTOR-NOTE: Auto-scroll can be managed manually if needed, ImGui might have built-in options too.
         // igSameLine(0, 10);
@@ -407,7 +370,11 @@ void UI_LogWindow()
 
         igSeparator();
         igBeginChild_Str("LogScrollingRegion", (ImVec2){0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
-        igTextUnformatted(ui_logBuffer, ui_logBuffer + ui_logLen);
+        for (size_t i = 0; i < ui_log_count; i++)
+        {
+            igTextV(ui_log_buffer[i].fmt, ui_log_buffer[i].ap);
+        }
+        
         // if (auto_scroll && igGetScrollY() >= igGetScrollMaxY()) { // Basic auto-scroll
         //     igSetScrollHereY(1.0f);
         // }
@@ -482,13 +449,13 @@ static void UI_RenderPatternTable_GPU(SDL_GPUDevice *device, NES *nes, int table
         }
         else
         {
-            UI_Log("PPUViewer: Failed to begin GPU copy pass: %s", SDL_GetError());
+            DEBUG_ERROR("PPUViewer: Failed to begin GPU copy pass: %s", SDL_GetError());
         }
         SDL_SubmitGPUCommandBuffer(cmd_buffer);
     }
     else
     {
-        UI_Log("PPUViewer: Failed to acquire GPU command buffer: %s", SDL_GetError());
+        DEBUG_ERROR("PPUViewer: Failed to acquire GPU command buffer: %s", SDL_GetError());
     }
 }
 
@@ -516,7 +483,7 @@ void UI_PPUViewer(NES *nes)
             sampler_info.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
             pt_sampler = SDL_CreateGPUSampler(gpu_device, &sampler_info);
             if (!pt_sampler)
-                UI_Log("PPUViewer: Failed to create sampler: %s", SDL_GetError());
+                DEBUG_ERROR("PPUViewer: Failed to create sampler: %s", SDL_GetError());
         }
         if (!pt_transfer_buffer)
         { // Create transfer buffer once (can be reused)
@@ -525,7 +492,7 @@ void UI_PPUViewer(NES *nes)
             transfer_create_info.size = 128 * 128 * 4 * 8 * 8; // For one 128x128 RGBA texture
             pt_transfer_buffer = SDL_CreateGPUTransferBuffer(gpu_device, &transfer_create_info);
             if (!pt_transfer_buffer)
-                UI_Log("PPUViewer: Failed to create transfer buffer: %s", SDL_GetError());
+                DEBUG_ERROR("PPUViewer: Failed to create transfer buffer: %s", SDL_GetError());
         }
         if (!pt_texture0 && gpu_device)
         {
@@ -539,7 +506,7 @@ void UI_PPUViewer(NES *nes)
             tex_info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
             pt_texture0 = SDL_CreateGPUTexture(gpu_device, &tex_info);
             if (!pt_texture0)
-                UI_Log("PPUViewer: Failed to create pt_texture0: %s", SDL_GetError());
+                DEBUG_ERROR("PPUViewer: Failed to create pt_texture0: %s", SDL_GetError());
         }
         if (!pt_texture1 && gpu_device)
         {
@@ -553,7 +520,7 @@ void UI_PPUViewer(NES *nes)
             tex_info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
             pt_texture1 = SDL_CreateGPUTexture(gpu_device, &tex_info);
             if (!pt_texture1)
-                UI_Log("PPUViewer: Failed to create pt_texture1: %s", SDL_GetError());
+                DEBUG_ERROR("PPUViewer: Failed to create pt_texture1: %s", SDL_GetError());
         }
 
         static uint32_t pt_pixel_buffer_rgba32[128 * 128]; // CPU-side buffer for pixel data
@@ -809,7 +776,7 @@ void UI_DrawDisassembler(NES *nes)
             if (ui_paused)
                 NES_Step(nes);
             else
-                UI_Log("Cannot step instruction while running. Pause first (F6).");
+                DEBUG_INFO("Cannot step instruction while running. Pause first (F6).");
         }
 
         igBeginChild_Str("DisassemblyRegion", (ImVec2){0, igGetTextLineHeightWithSpacing() * 18}, ImGuiChildFlags_Borders, ImGuiWindowFlags_None); // Removed ImGuiWindowFlags_HorizontalScrollbar as table handles it
@@ -888,12 +855,12 @@ void UI_ToggleFullscreen()
     // SDL_SetWindowFullscreen takes SDL_bool (SDL_TRUE/SDL_FALSE)
     if (SDL_SetWindowFullscreen(ui_window, ui_fullscreen ? true : false) != 0)
     {
-        UI_Log("Error toggling fullscreen: %s", SDL_GetError());
+        DEBUG_INFO("Error toggling fullscreen: %s", SDL_GetError());
         ui_fullscreen = !ui_fullscreen; // Revert state on error
     }
     else
     {
-        UI_Log("Toggled fullscreen to: %s", ui_fullscreen ? "ON" : "OFF");
+        DEBUG_INFO("Toggled fullscreen to: %s", ui_fullscreen ? "ON" : "OFF");
     }
 }
 
@@ -974,7 +941,9 @@ void UI_Init()
 
     Profiler_Init(); // Initialize Profiler
 
-    UI_Log("cEMU Initialized with SDL3_gpu. Welcome!");
+    DEBUG_RegisterCallback(UI_Log);
+
+    DEBUG_INFO("cEMU Initialized with SDL3_gpu. Welcome!");
 }
 
 static void UI_DebugToolbar(NES *nes)
@@ -994,7 +963,7 @@ static void UI_DebugToolbar(NES *nes)
             if (ui_paused && nes && nes->cpu)
                 NES_Step(nes);
             else
-                UI_Log("Can only step CPU when paused.");
+                DEBUG_INFO("Can only step CPU when paused.");
         }
         igSameLine(0, 4);
         if (igButton("Step Frame (F8)", (ImVec2){0, 0}))
@@ -1002,7 +971,7 @@ static void UI_DebugToolbar(NES *nes)
             if (ui_paused && nes)
                 NES_StepFrame(nes);
             else
-                UI_Log("Can only step frame when paused.");
+                DEBUG_INFO("Can only step frame when paused.");
         }
         igSameLine(0, 4);
         if (igButton("Reset (F5)", (ImVec2){0, 0}))
@@ -1112,7 +1081,7 @@ void UI_GameScreenWindow(NES *nes)
                 ppu_game_texture = SDL_CreateGPUTexture(gpu_device, &texture_info);
                 if (!ppu_game_texture)
                 {
-                    UI_Log("GameScreen: Failed to create PPU game texture: %s", SDL_GetError());
+                    DEBUG_ERROR("GameScreen: Failed to create PPU game texture: %s", SDL_GetError());
                     igTextColored((ImVec4){1.f, 0.f, 0.f, 1.f}, "Failed to create PPU game texture.");
                     igEnd();
                     igPopStyleVar(1);
@@ -1135,7 +1104,7 @@ void UI_GameScreenWindow(NES *nes)
                 ppu_game_sampler = SDL_CreateGPUSampler(gpu_device, &sampler_info);
                 if (!ppu_game_sampler)
                 {
-                    UI_Log("GameScreen: Failed to create PPU game sampler: %s", SDL_GetError());
+                    DEBUG_ERROR("GameScreen: Failed to create PPU game sampler: %s", SDL_GetError());
                     igTextColored((ImVec4){1.f, 0.f, 0.f, 1.f}, "Failed to create PPU game sampler.");
                     igEnd();
                     igPopStyleVar(1);
@@ -1154,7 +1123,7 @@ void UI_GameScreenWindow(NES *nes)
                 ppu_game_transfer_buffer = SDL_CreateGPUTransferBuffer(gpu_device, &transfer_create_info);
                 if (!ppu_game_transfer_buffer)
                 {
-                    UI_Log("GameScreen: Failed to create PPU transfer buffer: %s", SDL_GetError());
+                    DEBUG_ERROR("GameScreen: Failed to create PPU transfer buffer: %s", SDL_GetError());
                     igTextColored((ImVec4){1.f, 0.f, 0.f, 1.f}, "Failed to create PPU transfer buffer.");
                     igEnd();
                     igPopStyleVar(1);
@@ -1169,7 +1138,7 @@ void UI_GameScreenWindow(NES *nes)
                 void *mapped_memory = SDL_MapGPUTransferBuffer(gpu_device, ppu_game_transfer_buffer, false);
                 if (!mapped_memory)
                 {
-                    UI_Log("GameScreen: Failed to map GPU transfer buffer: %s", SDL_GetError());
+                    DEBUG_ERROR("GameScreen: Failed to map GPU transfer buffer: %s", SDL_GetError());
                 }
                 else
                 {
@@ -1204,13 +1173,13 @@ void UI_GameScreenWindow(NES *nes)
                         }
                         else
                         {
-                            UI_Log("GameScreen: Failed to begin GPU copy pass: %s", SDL_GetError());
+                            DEBUG_ERROR("GameScreen: Failed to begin GPU copy pass: %s", SDL_GetError());
                         }
                         SDL_SubmitGPUCommandBuffer(cmd_buffer);
                     }
                     else
                     {
-                        UI_Log("GameScreen: Failed to acquire GPU command buffer for texture upload: %s", SDL_GetError());
+                        DEBUG_ERROR("GameScreen: Failed to acquire GPU command buffer for texture upload: %s", SDL_GetError());
                     }
                 }
             }
@@ -1753,7 +1722,7 @@ void UI_Update(NES *nes)
             }
             else
             {
-                UI_Log("Failed to begin GPU render pass: %s", SDL_GetError());
+                DEBUG_ERROR("Failed to begin GPU render pass: %s", SDL_GetError());
             }
         }
         else if (is_minimized)
@@ -1763,7 +1732,7 @@ void UI_Update(NES *nes)
         }
         else if (swapchain_texture == NULL)
         {
-            // UI_Log("Failed to acquire swapchain texture: %s", SDL_GetError());
+            // DEBUG_ERROR("Failed to acquire swapchain texture: %s", SDL_GetError());
         }
 
         SDL_SubmitGPUCommandBuffer(command_buffer); // This also presents the frame

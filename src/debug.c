@@ -5,42 +5,21 @@
 #include <unistd.h>
 #include <time.h>
 #include <stdio.h>
-#include <sys/time.h>
 #include <signal.h>
 
 #include "debug.h"
 
 #define MAX_BUFFERS 8
 
-typedef struct
-{
-    int level;
-    va_list ap;
-    const char *fmt;
-    const char *file;
-    //struct tm *time;
-    struct timeval tp;
-    int line;
-} d_log;
-
 static struct {
     int level;
     bool quiet;
     bool alwaysFlush;
     void *buffers[MAX_BUFFERS];
+    debug_log_callback callbacks[MAX_BUFFERS];
 } ctx;
 
-static const char *levels[] = {
-        "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL", "ASSRT", "CONN"
-};
-
-#ifdef DEBUG_USE_COLOR
-static const char *colors[] = {
-        "\x1b[95m", "\x1b[36m", "\x1b[32m", "\x1b[33m", "\x1b[31m", "\x1b[35m", "\x1b[0;90m",
-};
-#endif
-
-int D_LogRegister(void *buffer) {
+int DEBUG_RegisterBuffer(void *buffer) {
     for (int i = 0; i < MAX_BUFFERS; i++)
         if (!ctx.buffers[i]) {
             ctx.buffers[i] = buffer;
@@ -50,7 +29,7 @@ int D_LogRegister(void *buffer) {
     return -1;
 }
 
-static void D_LogPrint(d_log *log, void *buffer)
+static void D_LogPrint(debug_log *log, void *buffer)
 {
     char time[16];
     time_t curtime = log->tp.tv_sec;
@@ -72,7 +51,7 @@ static void D_LogPrint(d_log *log, void *buffer)
     #ifdef DEBUG_USE_COLOR
         if (buffer == stdout || buffer == stderr)
             fprintf(buffer, "%s %s%-5s\x1b[0m ",
-                    time, colors[log->level], levels[log->level]);
+                    time, debug_log_esc_colors[log->level], debug_log_strings[log->level]);
         else
     #else
         if (buffer == stdout || buffer == stderr)
@@ -80,20 +59,19 @@ static void D_LogPrint(d_log *log, void *buffer)
         else
     #endif
 #endif
-
-
-
-    fprintf(buffer, "%s %-5s ", time, levels[log->level]);
+    
+    fprintf(buffer, "%s %-5s ", time, debug_log_strings[log->level]);
     vfprintf(buffer, log->fmt, log->ap);
     fprintf(buffer, "\n");
+    
 }
 
-void D_LogWrite(int level, const char *file, int line, const char *fmt, ...)
+void DEBUG_WriteLog(int level, const char *file, int line, const char *fmt, ...)
 {
     if (level < ctx.level)
         return;
 
-    d_log l = {
+    debug_log l = {
             .fmt   = fmt,
             .file  = (strrchr(file, '/') ? strrchr(file, '/') + 1 : file),
             .line  = line,
@@ -103,8 +81,15 @@ void D_LogWrite(int level, const char *file, int line, const char *fmt, ...)
     gettimeofday(&l.tp, 0);
     //TODO: STACK TRACE
 
+    for (int i = 0; i < MAX_BUFFERS && ctx.callbacks[i]; i++)
+    {
+        va_start(l.ap, fmt);
+        ctx.callbacks[i](l);
+        va_end(l.ap);
+    }
+
     va_start(l.ap, fmt);
-    if (l.level == DEBUG_LOG_TYPE_ERROR || l.level == DEBUG_LOG_TYPE_FATAL || l.level == DEBUG_LOG_TYPE_ASSERT)
+    if (l.level == DEBUG_LOG_LEVEL_ERROR || l.level == DEBUG_LOG_LEVEL_FATAL || l.level == DEBUG_LOG_LEVEL_ASSERT)
         D_LogPrint(&l, stderr);
     else
         D_LogPrint(&l, stdout);
@@ -117,11 +102,23 @@ void D_LogWrite(int level, const char *file, int line, const char *fmt, ...)
         va_end(l.ap);
     }
 
-    if (l.level == DEBUG_LOG_TYPE_FATAL)
+
+    if (l.level == DEBUG_LOG_LEVEL_FATAL)
         exit(-1);
 }
 
-void D_LogFlush()
+int DEBUG_RegisterCallback(debug_log_callback callback) 
+{
+    for (int i = 0; i < MAX_BUFFERS; i++)
+    if (!ctx.callbacks[i]) {
+        ctx.callbacks[i] = callback;
+        return 0;
+    }
+
+    return -1;
+}
+
+void DEBUG_Flush()
 {
     for (int i = 0; i < MAX_BUFFERS && ctx.buffers[i]; i++)
     {

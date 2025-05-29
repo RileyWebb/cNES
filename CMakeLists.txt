@@ -26,7 +26,7 @@ add_executable(cNES
         src/cNES/cpu.c 
         src/cNES/debugging.c 
         src/cNES/nes.c 
-        src/cNES/ppu_sdlgpu.c 
+        src/cNES/ppu_accelerated.c 
         src/cNES/ppu.c
         src/cNES/rom.c
 )

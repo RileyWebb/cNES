@@ -5,15 +5,6 @@
 
 typedef struct NES NES;
 
-void UI_InitStlye(); // This will be repurposed for applying themes
-void UI_Init();
-void UI_Shutdown();
-void UI_Update(NES *nes);
-
-
-// New UI helper function
-void UI_Log(const char* fmt, ...); // Declaration for UI_Log if not already public
-
 // New UI theme type
 typedef enum {
     UI_THEME_DEFAULT = 0,
@@ -50,6 +41,11 @@ extern bool ui_showCreditsWindow;
 extern bool ui_showLicenceWindow;
 
 extern UI_Theme ui_current_theme;
+
+void UI_InitStlye(); // This will be repurposed for applying themes
+void UI_Init();
+void UI_Shutdown();
+void UI_Update(NES *nes);
 
 // Function to apply a theme
 void UI_ApplyTheme(UI_Theme theme);
