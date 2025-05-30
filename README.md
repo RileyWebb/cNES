@@ -99,6 +99,7 @@ Contributions are welcome! If you'd like to contribute, please fork the reposito
 ## Todo
 
 - SDL3_NET
+- https://github.com/zlib-ng/minizip-ng
 
 ## License
 

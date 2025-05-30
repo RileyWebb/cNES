@@ -40,11 +40,11 @@ static void D_LogPrint(debug_log *log, void *buffer)
     #ifdef DEBUG_USE_COLOR
         if (buffer == stdout || buffer == stderr)
             fprintf(buffer, "%s %s%-5s\x1b[0m \x1b[90m%s:%d\x1b[0m ",
-                    time, colors[log->level], levels[log->level], log->file, log->line);
+                    time, debug_log_esc_colors[log->level], debug_log_strings[log->level], log->file, log->line);
         else
     #else
         if (buffer == stdout || buffer == stderr)
-            fprintf(buffer, "%s %-5s %s:%d ", time, levels[log->level], log->file, log->line);
+            fprintf(buffer, "%s %-5s %s:%d ", time, debug_log_strings[log->level], log->file, log->line);
         else
     #endif
 #else
@@ -55,7 +55,7 @@ static void D_LogPrint(debug_log *log, void *buffer)
         else
     #else
         if (buffer == stdout || buffer == stderr)
-            fprintf(buffer, "%s %-5s ", time, levels[log->level]);
+            fprintf(buffer, "%s %-5s ", time, debug_log_strings[log->level]);
         else
     #endif
 #endif

@@ -33,11 +33,18 @@ SDL_Window *ui_window;
 SDL_GPUDevice *gpu_device;
 ImGuiIO *ioptr;
 
+typedef struct ui_debug_log {
+    debug_log log; // The log entry
+    char *formatted; // Formatted string for display
+} ui_debug_log;
+
 // --- UI State ---
 bool ui_paused = true;
-static debug_log ui_log_buffer[8192];
+static ui_debug_log ui_log_buffer[8192];
 static size_t ui_log_count = 0;
 static float ui_fps = 0.0f;
+static uint64_t ui_frame_start = 0;
+static double ui_frame_time = 0.0;
 float ui_master_volume = 0.8f;
 bool ui_fullscreen = false;
 
@@ -58,7 +65,7 @@ bool ui_showGameScreen = true;
 bool ui_showProfilerWindow = true;
 bool ui_showPpuViewer = false;
 bool ui_showLog = true;
-bool ui_showMemoryViewer = true;
+bool ui_showMemoryViewer = false;
 bool ui_showSettingsWindow = false;
 
 bool ui_showAboutWindow = false;
@@ -87,7 +94,9 @@ static SDL_GPUTextureSamplerBinding ppu_game_texture_sampler_binding = {0};
 void UI_Log(debug_log log)
 {
     //if (ui_log_count > )
-    ui_log_buffer[ui_log_count] = log;
+    ui_log_buffer[ui_log_count].log = log;
+    ui_log_buffer[ui_log_count].formatted = (char *)malloc(1024); // Allocate memory for formatted string
+    vsnprintf(ui_log_buffer[ui_log_count].formatted, 1024, log.fmt, log.ap);
     ui_log_count++;
 }
 
@@ -359,32 +368,73 @@ void UI_ApplyTheme(UI_Theme theme)
     }
 }
 
+static ImVec4 ui_log_colors[] = {
+    {0.7f, 0.7f, 0.7f, 1.0f}, // TRACE - Light Gray
+    {0.0f, 1.0f, 1.0f, 1.0f}, // DEBUG - Cyan
+    {0.0f, 0.8f, 0.0f, 1.0f}, // INFO - Green
+    {1.0f, 1.0f, 0.0f, 1.0f}, // WARN - Yellow
+    {1.0f, 0.0f, 0.0f, 1.0f}, // ERROR - Red
+    {1.0f, 0.0f, 1.0f, 1.0f}, // FATAL - Magenta
+    {1.0f, 0.5f, 0.0f, 1.0f}, // ASSRT - Orange
+    {0.5f, 0.0f, 1.0f, 1.0f}  // CONN - Purple
+};
+
 void UI_LogWindow()
 {
     if (!ui_showLog)
         return;
+
+    static int selected_log_level_filter = DEBUG_LOG_LEVEL_TRACE; // Show all by default
+
     if (igBegin("Log", &ui_showLog, ImGuiWindowFlags_None))
     {
         if (igButton("Clear", (ImVec2){0, 0}))
         {
-            memset(ui_log_buffer, 0, sizeof(debug_log) * ui_log_count);
+            for (size_t i = 0; i < ui_log_count; i++)
+            {
+                if (ui_log_buffer[i].formatted) {
+                    free(ui_log_buffer[i].formatted);
+                    ui_log_buffer[i].formatted = NULL;
+                }
+            }
+            memset(ui_log_buffer, 0, sizeof(ui_debug_log) * ui_log_count); // Clear the whole struct
             ui_log_count = 0;
         }
-        // REFACTOR-NOTE: Auto-scroll can be managed manually if needed, ImGui might have built-in options too.
-        // igSameLine(0, 10);
-        // static bool auto_scroll = true;
-        // igCheckbox("Auto-scroll", &auto_scroll);
+        igSameLine(0, 10);
+
+        // Dropdown for log level filter
+        igSetNextItemWidth(150); // Adjust width as needed
+        //const char* log_level_items[] = { "Trace", "Debug", "Info", "Warn", "Error", "Fatal", "Assert", "Conn" };
+        if (igCombo_Str_arr("Min Level", &selected_log_level_filter, debug_log_strings, DEBUG_LEVEL_COUNT, 4))
+        {
+            // Optional: Action on change, e.g., force scroll to bottom or re-filter
+        }
 
         igSeparator();
         igBeginChild_Str("LogScrollingRegion", (ImVec2){0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
         for (size_t i = 0; i < ui_log_count; i++)
         {
-            igTextV(ui_log_buffer[i].fmt, ui_log_buffer[i].ap);
+            if (ui_log_buffer[i].log.level >= selected_log_level_filter)
+            {
+                struct tm *t = localtime(&ui_log_buffer[i].log.tp.tv_sec);
+                // Check if t is NULL, which can happen with invalid time_t values
+                if (t) {
+                    igText("%02d:%02d:%02d.%06ld", t->tm_hour, t->tm_min, t->tm_sec, (long)ui_log_buffer[i].log.tp.tv_usec);
+                } else {
+                    igText("--:--:--.------"); // Placeholder for invalid time
+                }
+                igSameLine(0, 5);
+                igTextColored(ui_log_colors[ui_log_buffer[i].log.level],
+                              "[%s]", debug_log_strings[ui_log_buffer[i].log.level]);
+                igSameLine(0, 5); // Add some spacing after the log level
+                if (ui_log_buffer[i].formatted) {
+                    igTextUnformatted(ui_log_buffer[i].formatted, NULL);
+                } else {
+                    igTextUnformatted("Error: Log message not formatted.", NULL);
+                }
+            }
         }
-        
-        // if (auto_scroll && igGetScrollY() >= igGetScrollMaxY()) { // Basic auto-scroll
-        //     igSetScrollHereY(1.0f);
-        // }
+
         if (igGetScrollY() >= igGetScrollMaxY()) // Scroll to bottom if at the end
             igSetScrollHereY(1.0f);
         igEndChild();
@@ -946,11 +996,11 @@ void UI_Init()
 
     UI_ApplyTheme(UI_THEME_DARK); // Apply initial theme (also sets clear_color)
 
-    Profiler_Init(); // Initialize Profiler
+    //Profiler_Init(); // Initialize Profiler
 
     DEBUG_RegisterCallback(UI_Log);
 
-    DEBUG_INFO("cEMU Initialized with SDL3_gpu. Welcome!");
+    DEBUG_INFO("cNES Initialized");
 }
 
 static void UI_DebugToolbar(NES *nes)
@@ -1259,11 +1309,11 @@ void UI_Profiler_DrawWindow(Profiler *profiler)
     igSetNextWindowSize((ImVec2){600, 500}, ImGuiCond_FirstUseEver);
     if (igBegin("Profiler", &ui_showProfilerWindow, ImGuiWindowFlags_None))
     {
-        bool profiler_enabled = Profiler_IsEnabled();
+        bool profiler_enabled = false;//Profiler_IsEnabled();
 
         if (igCheckbox("Show Profiler", &profiler_enabled))
         {
-            Profiler_Enable(profiler_enabled);
+            //Profiler_Enable(profiler_enabled);
             //ui_showProfilerWindow = profiler_enabled; // Close window if disabled
         }
 
@@ -1402,9 +1452,11 @@ void UI_Profiler_DrawWindow(Profiler *profiler)
     igEnd();
 }
 
+static float ui_status_bar_height = 0;
+
 void UI_DrawStatusBar(NES *nes)
 {
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoNavInputs | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoDocking;
 
     const char *version_text = CNES_VERSION_BUILD_STRING; // REFACTOR-NOTE: Consistent versioning
     ImVec2 version_text_size;
@@ -1412,27 +1464,21 @@ void UI_DrawStatusBar(NES *nes)
 
     // Calculate status bar height based on current style (font size + frame padding)
     // igGetFrameHeight() = FontSize + style.FramePadding.y * 2
-    float status_bar_height = igGetFrameHeight(); 
+    ui_status_bar_height = igGetFrameHeight(); 
 
     ImGuiViewport *viewport = igGetMainViewport();
     // Ensure the status bar height is at least the text line height with spacing, plus a little extra if frame padding is small
     float min_height = igGetTextLineHeightWithSpacing() + igGetStyle()->WindowPadding.y; // Ensure text fits comfortably
-    if (status_bar_height < min_height) {
-        status_bar_height = min_height;
+    if (ui_status_bar_height < min_height) {
+        ui_status_bar_height = min_height;
     }
 
-    igSetNextWindowSize((ImVec2){viewport->WorkSize.x, status_bar_height}, ImGuiCond_Always);
-    igSetNextWindowPos((ImVec2){viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - status_bar_height}, ImGuiCond_Always, (ImVec2){0, 0});
+    igSetNextWindowSize((ImVec2){viewport->WorkSize.x, ui_status_bar_height}, ImGuiCond_Always);
+    igSetNextWindowPos((ImVec2){viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - ui_status_bar_height}, ImGuiCond_Always, (ImVec2){0, 0});
 
     if (igBegin("Status Bar", NULL, flags))
     {
-        // FPS calculation is now handled by the profiler
-        if (ioptr->DeltaTime > FLT_MIN) { // FLT_MIN is from <float.h>
-            ui_fps = 1.0f / ioptr->DeltaTime; // Standard FPS calculation
-        } else {
-            ui_fps = 0.0f; // Avoid division by zero
-        }
-
+        // FPS calculation is now done in UI_Update. ui_fps is updated there.
         igText("FPS: %.1f | ROM: %s | %s", ui_fps, nes->rom ? nes->rom->name : "No ROM Loaded", ui_paused ? "Paused" : "Running");
 
         //const char *version_text = CNES_VERSION_BUILD_STRING; // REFACTOR-NOTE: Consistent versioning
@@ -1462,7 +1508,7 @@ void UI_Draw(NES *nes)
 {
     ImGuiViewport *viewport = igGetMainViewport();
     igSetNextWindowPos(viewport->WorkPos, ImGuiCond_Always, (ImVec2){0, 0});
-    igSetNextWindowSize(viewport->WorkSize, ImGuiCond_Always);
+    igSetNextWindowSize((ImVec2){viewport->WorkSize.x, viewport->WorkSize.y - ui_status_bar_height}, ImGuiCond_Always);
     igSetNextWindowViewport(viewport->ID);
 
     ImGuiWindowFlags host_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
@@ -1520,12 +1566,13 @@ void UI_Draw(NES *nes)
 
         // Ensure windows part of the default layout are initially set to visible
         ui_showGameScreen = true;
-        ui_showCpuWindow = true;
-        ui_showDisassembler = true;
-        ui_showPpuViewer = true;
-        ui_showMemoryViewer = true;
+        ui_showCpuWindow = false;
+        ui_showDisassembler = false;
+        ui_showPpuViewer = false;
+        ui_showMemoryViewer = false;
         ui_showLog = true;
-        ui_showToolbar = true; // For Debug Controls window
+        ui_showProfilerWindow = false; // Profiler window is not shown by default
+        ui_showToolbar = false; // For Debug Controls window
     }
 
     UI_DrawMainMenuBar(nes);
@@ -1566,7 +1613,9 @@ bool ui_quit_requested = false;
 
 void UI_Update(NES *nes)
 {
-    Profiler_BeginFrame();
+    //Profiler_BeginFrame();
+
+    ui_frame_start = SDL_GetPerformanceCounter();
 
     SDL_Event e;
     while (SDL_PollEvent(&e))
@@ -1648,12 +1697,12 @@ void UI_Update(NES *nes)
             static int ppu_frame = 0;
             static int cpu_nmi = 0;
 
-            if (p_nes_frame == 0) p_nes_frame = Profiler_CreateSection("NES_Frame");
-            if (cpu_frame == 0) cpu_frame = Profiler_CreateSection("CPU_Frame");
-            if (ppu_frame == 0) ppu_frame = Profiler_CreateSection("PPU_Frame");
-            if (cpu_nmi == 0) cpu_nmi = Profiler_CreateSection("CPU_NMI");
+            //if (p_nes_frame == 0) p_nes_frame = //Profiler_CreateSection("NES_Frame");
+            //if (cpu_frame == 0) cpu_frame = //Profiler_CreateSection("CPU_Frame");
+            //if (ppu_frame == 0) ppu_frame = //Profiler_CreateSection("PPU_Frame");
+            //if (cpu_nmi == 0) cpu_nmi = //Profiler_CreateSection("CPU_NMI");
 
-            Profiler_BeginSectionByID(p_nes_frame);
+            //Profiler_BeginSectionByID(p_nes_frame);
 
             int current_frame = nes->ppu->frame_odd;
 
@@ -1661,45 +1710,45 @@ void UI_Update(NES *nes)
                 // PPU steps
 
                 for (int i = 0; i < 3; i++) {
-                    Profiler_BeginSectionByID(ppu_frame);
+                    //Profiler_BeginSectionByID(ppu_frame);
                     PPU_Step(nes->ppu);
-                    Profiler_EndSection(ppu_frame);
+                    //Profiler_EndSection(ppu_frame);
                 }
 
                 // NMI handling
                 if (nes->ppu->nmi_interrupt_line) {
-                    Profiler_BeginSectionByID(cpu_nmi);
+                    //Profiler_BeginSectionByID(cpu_nmi);
                     CPU_NMI(nes->cpu);
                     nes->ppu->nmi_interrupt_line = 0;
-                    Profiler_EndSection(cpu_nmi);
+                    //Profiler_EndSection(cpu_nmi);
                 }
 
                 // CPU step
-                Profiler_BeginSectionByID(cpu_frame);
+                //Profiler_BeginSectionByID(cpu_frame);
                 if (CPU_Step(nes->cpu) == -1) {
                     DEBUG_ERROR("CPU execution halted due to error");
                 }
-                Profiler_EndSection(cpu_frame);
+                //Profiler_EndSection(cpu_frame);
             }
-            Profiler_EndSection(p_nes_frame);
+            //Profiler_EndSection(p_nes_frame);
         }
     }
 
     static int p_ui_draw = 0;
     static int p_ig_render = 0;
 
-    if (p_ui_draw == 0) p_ui_draw = Profiler_CreateSection("UI_Draw");
+    //if (p_ui_draw == 0) p_ui_draw = //Profiler_CreateSection("UI_Draw");
 
-    if (p_ig_render == 0) p_ig_render = Profiler_CreateSection("IG_Render");
-    Profiler_BeginSectionByID(p_ui_draw);
+    //if (p_ig_render == 0) p_ig_render = //Profiler_CreateSection("IG_Render");
+    //Profiler_BeginSectionByID(p_ui_draw);
 
     UI_Draw(nes);
 
-    Profiler_EndSection(p_ui_draw);
+    //Profiler_EndSection(p_ui_draw);
 
-    Profiler_BeginSectionByID(p_ig_render);
+    //Profiler_BeginSectionByID(p_ig_render);
     igRender();
-    Profiler_EndSection(p_ig_render);
+    //Profiler_EndSection(p_ig_render);
 
     ImDrawData *draw_data = igGetDrawData();
     const bool is_minimized = (draw_data->DisplaySize.x <= 0.0f || draw_data->DisplaySize.y <= 0.0f);
@@ -1764,7 +1813,11 @@ void UI_Update(NES *nes)
         igUpdatePlatformWindows();
         igRenderPlatformWindowsDefault(NULL, NULL); // This should work with SDL_gpu backend
     }
-    Profiler_EndFrame();
+    //Profiler_EndFrame();
+
+    uint64_t frame_end = SDL_GetPerformanceCounter();
+    ui_frame_time = (float)((frame_end - ui_frame_start) * 1000.0 / SDL_GetPerformanceFrequency()); // Convert to milliseconds
+    ui_fps = 1000.0f / ui_frame_time; // Calculate FPS
 }
 
 uint8_t UI_PollInput(int controller)
@@ -1778,7 +1831,7 @@ void UI_Shutdown()
 {
     // REFACTOR-NOTE: Save recent ROMs list, window positions/docking layout (imgui.ini handles docking if enabled).
     // Consider saving settings (theme, volume) to a config file.
-    Profiler_Shutdown(); // Shutdown Profiler
+    //Profiler_Shutdown(); // Shutdown Profiler
 
     DEBUG_INFO("Shutting down UI");
 

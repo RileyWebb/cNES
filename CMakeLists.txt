@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.5)
 project(cNES C)
 
 enable_testing()
@@ -37,7 +37,7 @@ if (WIN32)
 endif()
 
 
-target_link_libraries(cNES PRIVATE ${PLATFORM_LIBS} cimgui cimplot) #SDL2main)# cglm stb)#vulkan glew gl glu)
+target_link_libraries(cNES PRIVATE ${PLATFORM_LIBS} cimgui cimplot cjson-static minizip-ng) #SDL2main)# cglm stb)#vulkan glew gl glu)
 target_link_libraries(cNES PUBLIC SDL3-shared) #SDL2)
 
 target_compile_options(cNES PRIVATE

@@ -1,8 +1,12 @@
 add_subdirectory(sdl EXCLUDE_FROM_ALL)
+
+set(BUILD_SHARED_AND_STATIC_LIBS TRUE)
+set(CJSON_BUILD_SHARED_LIBS FALSE)
+add_subdirectory(cjson EXCLUDE_FROM_ALL)
+
+add_subdirectory(minizip-ng EXCLUDE_FROM_ALL)
 #add_subdirectory(libuv EXCLUDE_FROM_ALL)
 #add_subdirectory(zip EXCLUDE_FROM_ALL)
-#add_subdirectory(protobuf)
-#add_subdirectory(protobuf-c/build-cmake EXCLUDE_FROM_ALL)
 
 #STB
 #file(GLOB STB_SOURCES stb/*.h)

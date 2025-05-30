@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <sys/time.h>
+#include <stdarg.h>
 
 #define DEBUG_USE_COLOR
 //#define DEBUG_ASSERT_EXITS
@@ -48,6 +49,8 @@
 #define DEBUG_TRACE()
 #endif
 
+#define DEBUG_LEVEL_COUNT 7
+
 typedef enum DEBUG_LOG_LEVEL {
 	DEBUG_LOG_LEVEL_TRACE = 0,
 	DEBUG_LOG_LEVEL_DEBUG = 1,
@@ -55,8 +58,7 @@ typedef enum DEBUG_LOG_LEVEL {
 	DEBUG_LOG_LEVEL_WARN = 3,
 	DEBUG_LOG_LEVEL_ERROR = 4,
 	DEBUG_LOG_LEVEL_FATAL = 5,
-	DEBUG_LOG_LEVEL_ASSERT = 6,
-	DEBUG_LOG_LEVEL_CONSOLE = 7
+	DEBUG_LOG_LEVEL_ASSERT = 6
 } DEBUG_LOG_LEVEL;
 
 typedef struct
@@ -71,7 +73,7 @@ typedef struct
 } debug_log;
 
 static const char *debug_log_strings[] = {
-	"TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL", "ASSRT", "CONN"
+	"TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL", "ASSRT"
 };
 
 static const char *debug_log_esc_colors[] = {

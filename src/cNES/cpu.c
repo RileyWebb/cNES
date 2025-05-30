@@ -480,23 +480,17 @@ int CPU_Step(CPU *cpu) {
     //uint16_t initial_pc_debug = cpu->pc; // For debugging
 
     uint8_t opcode = BUS_Read(cpu->nes, cpu->pc++);
-    Instruction inst = instruction_lookup[opcode];
+    Instruction *inst = &instruction_lookup[opcode];
 
     bool page_crossed_by_addr = false;
-    uint16_t effective_address = 0;
+    uint16_t effective_address = inst->addressing_mode(cpu, &page_crossed_by_addr);
 
-    //if (inst.addressing_mode) {
-        effective_address = inst.addressing_mode(cpu, &page_crossed_by_addr);
-    //}
-
-    uint8_t current_opcode_cycles = inst.cycles;
-    if (page_crossed_by_addr && inst.add_cycles_on_page_cross) {
+    uint8_t current_opcode_cycles = inst->cycles;
+    if (page_crossed_by_addr && inst->add_cycles_on_page_cross) {
         current_opcode_cycles++;
     }
 
-    if (inst.operation) {
-        inst.operation(cpu, effective_address, &current_opcode_cycles);
-    }
+    inst->operation(cpu, effective_address, &current_opcode_cycles);
     
     cpu->total_cycles += current_opcode_cycles;
 
