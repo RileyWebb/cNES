@@ -1512,7 +1512,7 @@ void UI_Draw(NES *nes)
     igSetNextWindowViewport(viewport->ID);
 
     ImGuiWindowFlags host_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                                  ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
+                                  ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoDocking;
 
     igPushStyleVar_Float(ImGuiStyleVar_WindowRounding, 0.0f);
     igPushStyleVar_Float(ImGuiStyleVar_WindowBorderSize, 0.0f);
