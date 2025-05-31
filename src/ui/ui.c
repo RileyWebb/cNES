@@ -416,7 +416,8 @@ void UI_LogWindow()
         {
             if (ui_log_buffer[i].log.level >= selected_log_level_filter)
             {
-                struct tm *t = localtime(&ui_log_buffer[i].log.tp.tv_sec);
+                time_t curtime = ui_log_buffer[i].log.tp.tv_sec;
+                struct tm *t = localtime(&curtime);
                 // Check if t is NULL, which can happen with invalid time_t values
                 if (t) {
                     igText("%02d:%02d:%02d.%06ld", t->tm_hour, t->tm_min, t->tm_sec, (long)ui_log_buffer[i].log.tp.tv_usec);
@@ -956,6 +957,8 @@ void UI_Init()
         SDL_Quit();
         exit(1);
     }
+
+    DEBUG_INFO("GPU Device created with %s driver", SDL_GetGPUDeviceDriver(gpu_device));
 
     // Claim window for GPU Device
     if (!SDL_ClaimWindowForGPUDevice(gpu_device, ui_window))
