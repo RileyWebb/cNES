@@ -53,7 +53,7 @@ jobs:
 
     steps:
     - uses: ilammy/msvc-dev-cmd@v1
-    - uses: leafo/gh-actions-lua@v11
+    - uses: jkl1337/gh-actions-lua@v11
       with:
         luaVersion: "luajit-2.1.0-beta3"
     - uses: actions/checkout@v4
