@@ -58,9 +58,7 @@ jobs:
       run: winget install --id LuaJIT.LuaJIT -e --source winget --accept-source-agreements --accept-package-agreements
     - name: Install LuaJIT (Linux)
       if: runner.os == 'Linux'
-      run: |
-      sudo apt-get update
-      sudo apt-get install -y luajit
+      run: sudo apt-get update && sudo apt-get install -y luajit
     - uses: actions/checkout@v4
       with:
         submodules: 'recursive'
