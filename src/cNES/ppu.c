@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include <malloc.h>
 #include <math.h> // For fabsf in scalar color emphasis, or general float math
-
+#define PPU_USE_SIMD_COLOR_EMPHASIS
 
 #ifdef __AVX2__ //AVX2
 
@@ -485,7 +485,7 @@ uint8_t PPU_ReadRegister(PPU *ppu, uint16_t addr) {
 }
 
 void PPU_WriteRegister(PPU *ppu, uint16_t addr, uint8_t value) {
-    // ppu->data_buffer = value; // Some emulators update data_buffer on any PPU write for open bus.
+    ppu->data_buffer = value;   // Some emulators update data_buffer on any PPU write for open bus.
                                 // NESDev implies it's more specifically related to PPU bus activity.
                                 // For now, keep data_buffer updated by PPUDATA reads mostly.
     
