@@ -17,6 +17,7 @@ typedef enum {
 
 typedef struct SDL_Window SDL_Window;
 typedef struct SDL_GPUDevice SDL_GPUDevice;
+//typedef float ImVec4[4];
 
 extern SDL_GPUDevice *gpu_device; // GPU device for rendering
 extern SDL_Window *ui_window;

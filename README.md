@@ -99,7 +99,13 @@ Contributions are welcome! If you'd like to contribute, please fork the reposito
 ## Todo
 
 - SDL3_NET
+- SDL3_AUDIO
 - https://github.com/zlib-ng/minizip-ng
+- add file loader system
+- llvm cpu
+- luajit
+- add different loaders and mappers
+- add sdl3 software renderer support
 
 ## License
 

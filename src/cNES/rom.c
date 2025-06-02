@@ -10,8 +10,14 @@ ROM *ROM_LoadFile(const char *path)
     }
 
     size_t size = 0;
-    FILE *file = fopen(path, "rb");
     uint8_t *data = NULL;
+    FILE *file = fopen(path, "rb");
+
+    if (!file) 
+    {
+        DEBUG_ERROR("Failed to open ROM file %s", path);
+        return NULL; // Return NULL if file opening fails
+    }
 
     fseek(file, 0, SEEK_END);
     size = ftell(file);
