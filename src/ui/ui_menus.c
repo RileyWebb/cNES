@@ -426,6 +426,95 @@ void UI_SettingsMenu(NES *nes)
                     UI_ToggleFullscreen();
                 igSameLine(0, 10);
                 igTextDisabled("(F11)");
+
+                // Define data for Present Modes (VSync)
+                // These static const arrays are initialized once when the function is first called.
+                static const char *present_mode_names_list[] = {"Immediate", "Mailbox", "FIFO (VSync)"};
+                static const SDL_GPUPresentMode present_mode_values_list[] = {
+                    SDL_GPU_PRESENTMODE_IMMEDIATE,
+                    SDL_GPU_PRESENTMODE_MAILBOX,
+                    SDL_GPU_PRESENTMODE_VSYNC,
+                };
+                // Static variable to store the selected index, persists across calls.
+                static int selected_present_mode_idx = 2; // Default to FIFO (VSync), which is index 2
+
+                // Define data for Swapchain Composition
+                // Typedef is local to this function's scope (C99 and later).
+                // If using an older C standard, this typedef might need to be at file scope.
+                typedef struct {
+                    const char* name;
+                    SDL_GPUSwapchainComposition composition;
+                } LocalSwapchainModeInfo_t;
+
+                static const LocalSwapchainModeInfo_t swapchain_modes_list[] = {
+                    {"SDR", SDL_GPU_SWAPCHAINCOMPOSITION_SDR},
+                    {"SDR (Linear)", SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR},
+                    {"HDR (Extended Linear)", SDL_GPU_SWAPCHAINCOMPOSITION_HDR_EXTENDED_LINEAR},
+                    {"HDR10 (ST2084)", SDL_GPU_SWAPCHAINCOMPOSITION_HDR10_ST2084}
+                };
+                static int selected_swapchain_mode_idx = 0; // Default to SDR, which is index 0
+
+                // Helper array for swapchain mode names in the ImGui combo box
+                // This array's pointers will be filled once.
+                static const char* swapchain_mode_combo_names_list[SDL_arraysize(swapchain_modes_list)];
+                static bool swapchain_combo_names_list_initialized = false;
+
+                // One-time initialization for swapchain_mode_combo_names_list
+                if (!swapchain_combo_names_list_initialized) {
+                    for (size_t i = 0; i < SDL_arraysize(swapchain_modes_list); ++i) {
+                        swapchain_mode_combo_names_list[i] = swapchain_modes_list[i].name;
+                    }
+                    swapchain_combo_names_list_initialized = true;
+                }
+
+                igSeparator(); 
+                igText("Renderer Settings:");
+
+                const LocalSwapchainModeInfo_t selected_mode = swapchain_modes_list[selected_swapchain_mode_idx];
+
+                // VSync (Present Mode) Dropdown
+                if (igCombo_Str_arr("VSync (Present Mode)", &selected_present_mode_idx, present_mode_names_list, SDL_arraysize(present_mode_names_list), 4))
+                {
+                    if (ui_window) { // Ensure ui_window is not NULL
+                        if (!SDL_SetGPUSwapchainParameters(gpu_device, ui_window, selected_mode.composition, present_mode_values_list[selected_present_mode_idx]))
+                        {
+                            DEBUG_WARN("UI: Failed to set Present Mode to %s: %s", present_mode_names_list[selected_present_mode_idx], SDL_GetError());
+                            // Optionally, could try to revert selected_present_mode_idx to a previously known good value
+                        }
+                        else
+                        {
+                            DEBUG_INFO("UI: Present Mode set to %s", present_mode_names_list[selected_present_mode_idx]);
+                        }
+                    }
+                }
+                igTextDisabled("Controls screen tearing and latency. FIFO provides VSync.");
+
+                // Swapchain Composition Dropdown
+                if (igCombo_Str_arr("Swapchain Composition", &selected_swapchain_mode_idx, swapchain_mode_combo_names_list, SDL_arraysize(swapchain_modes_list), 4))
+                {
+                    if (ui_window) { // Ensure ui_window is not NULL
+                        // Check if the selected composition and colorspace are supported
+                        if (SDL_WindowSupportsGPUSwapchainComposition(gpu_device, ui_window, selected_mode.composition))
+                        {
+                            if (!SDL_SetGPUSwapchainParameters(gpu_device, ui_window, selected_mode.composition, present_mode_values_list[selected_present_mode_idx]))
+                            {
+                                DEBUG_WARN("UI: Failed to set Swapchain Composition to %s: %s", selected_mode.name, SDL_GetError());
+                            }
+                            else
+                            {
+                                DEBUG_INFO("UI: Swapchain Composition set to %s", selected_mode.name);
+                            }
+                        }
+                        else
+                        {
+                            DEBUG_WARN("UI: Swapchain Composition %s is not supported.", selected_mode.name);
+                            // Optionally, revert selected_swapchain_mode_idx
+                        }
+                    }
+                }
+                igTextDisabled("Determines color space and dynamic range (e.g., SDR, HDR).");
+                igSeparator();
+
                 // REFACTOR-NOTE: Add font scaling options, game screen aspect ratio/scaling options here.
                 igTextDisabled("More display settings (font, scaling) can be added here.");
                 igEndTabItem();

@@ -16,6 +16,9 @@ typedef enum {
 //extern ImGuiIO* ioptr;
 
 typedef struct SDL_Window SDL_Window;
+typedef struct SDL_GPUDevice SDL_GPUDevice;
+
+extern SDL_GPUDevice *gpu_device; // GPU device for rendering
 extern SDL_Window *ui_window;
 
 extern float ui_font_size;

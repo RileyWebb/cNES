@@ -19,37 +19,41 @@ typedef struct {
     addr_mode_func_ptr addressing_mode;  // Pointer to the addressing mode function
     uint8_t cycles;                     // Base CPU cycles for the instruction
     uint8_t add_cycles_on_page_cross;   // 1 if read op with page-crossing addr mode adds cycle, 0 otherwise
-} Instruction;
+} CPU_Instruction;
 
-// --- Helper Functions (static inline) ---
-static inline void CPU_Push(CPU *cpu, uint8_t value) {
+static inline void CPU_Push(CPU *cpu, uint8_t value) 
+{
     // Stack is at $0100-$01FF. SP is an offset.
     cpu->nes->bus->memory[0x0100 + cpu->sp] = value;
     cpu->sp = (cpu->sp - 1) & 0xFF; // Decrement stack pointer and wrap at 0xFF
 }
 
-static inline uint8_t CPU_Pop(CPU *cpu) {
+static inline uint8_t CPU_Pop(CPU *cpu) 
+{
     cpu->sp = (cpu->sp + 1) & 0xFF; // Increment stack pointer and wrap at 0xFF
     return cpu->nes->bus->memory[0x0100 + cpu->sp];
 }
 
-static inline void CPU_Push16(CPU *cpu, uint16_t value) {
+static inline void CPU_Push16(CPU *cpu, uint16_t value) 
+{
     CPU_Push(cpu, (uint8_t)(value >> 8));   // High byte
     CPU_Push(cpu, (uint8_t)(value & 0xFF)); // Low byte
 }
 
-static inline uint16_t CPU_Pop16(CPU *cpu) {
+static inline uint16_t CPU_Pop16(CPU *cpu) 
+{
     uint8_t lo = CPU_Pop(cpu);
     uint8_t hi = CPU_Pop(cpu);
     return (uint16_t)lo | ((uint16_t)hi << 8);
 }
 
-static inline void CPU_UpdateZeroNegativeFlags(CPU *cpu, uint8_t value) {
+static inline void CPU_UpdateZeroNegativeFlags(CPU *cpu, uint8_t value) 
+{
     CPU_SetFlag(cpu, CPU_FLAG_ZERO, value == 0);
     CPU_SetFlag(cpu, CPU_FLAG_NEGATIVE, (value & 0x80) != 0);
 }
 
-// --- Addressing Modes (static inline) ---
+// Addressing Mode Foward Declarations
 static inline uint16_t CPU_ADDR_IMP(CPU *cpu, bool *page_crossed) { (void)cpu; *page_crossed = false; return 0; }
 static inline uint16_t CPU_ADDR_ACC(CPU *cpu, bool *page_crossed) { (void)cpu; *page_crossed = false; return 0; }
 static inline uint16_t CPU_ADDR_IMM(CPU *cpu, bool *page_crossed) { *page_crossed = false; return cpu->pc++; }
@@ -64,7 +68,7 @@ static inline uint16_t CPU_ADDR_IND(CPU *cpu, bool *page_crossed) { *page_crosse
 static inline uint16_t CPU_ADDR_IZX(CPU *cpu, bool *page_crossed) { *page_crossed = false; uint8_t zp_addr_base = BUS_Read(cpu->nes, cpu->pc++); uint8_t zp_addr = (zp_addr_base + cpu->x) & 0xFF; uint16_t effective_addr_lo = BUS_Read(cpu->nes, zp_addr); uint16_t effective_addr_hi = BUS_Read(cpu->nes, (zp_addr + 1) & 0xFF); return (effective_addr_hi << 8) | effective_addr_lo; }
 static inline uint16_t CPU_ADDR_IZY(CPU *cpu, bool *page_crossed) { uint8_t zp_addr = BUS_Read(cpu->nes, cpu->pc++); uint16_t base_addr_lo = BUS_Read(cpu->nes, zp_addr); uint16_t base_addr_hi = BUS_Read(cpu->nes, (zp_addr + 1) & 0xFF); uint16_t base_addr = (base_addr_hi << 8) | base_addr_lo; uint16_t final_addr = base_addr + cpu->y; *page_crossed = ((base_addr & 0xFF00) != (final_addr & 0xFF00)); return final_addr; }
 
-// Official
+// Official Opcode Foward Declarations
 static void CPU_OP_ADC(CPU *cpu, uint16_t address, uint8_t *cycles_ref);
 static void CPU_OP_AND(CPU *cpu, uint16_t address, uint8_t *cycles_ref);
 static void CPU_OP_ASL_A(CPU *cpu, uint16_t address, uint8_t *cycles_ref);
@@ -126,7 +130,7 @@ static void CPU_OP_TXA(CPU *cpu, uint16_t address, uint8_t *cycles_ref);
 static void CPU_OP_TXS(CPU *cpu, uint16_t address, uint8_t *cycles_ref);
 static void CPU_OP_TYA(CPU *cpu, uint16_t address, uint8_t *cycles_ref);
 
-// Unofficial / Illegal Opcodes
+// Unofficial Opcode Foward Declarations
 static void CPU_OP_KIL(CPU *cpu, uint16_t address, uint8_t *cycles_ref); // Halts CPU
 static void CPU_OP_SLO(CPU *cpu, uint16_t address, uint8_t *cycles_ref); // ASL + ORA
 static void CPU_OP_RLA(CPU *cpu, uint16_t address, uint8_t *cycles_ref); // ROL + AND
@@ -145,7 +149,8 @@ static void CPU_OP_SHX(CPU *cpu, uint16_t address, uint8_t *cycles_ref); // Stor
 static void CPU_OP_SHY(CPU *cpu, uint16_t address, uint8_t *cycles_ref); // Store Y & (HighByte(Address) + 1)
 static void CPU_OP_TAS(CPU *cpu, uint16_t address, uint8_t *cycles_ref); // Store A & X -> SP; (A & X & (HighByte(Address) + 1)) -> Address (unstable) - Simplified to SP = A & X
 static void CPU_OP_LAS(CPU *cpu, uint16_t address, uint8_t *cycles_ref); // Load (Memory & SP) -> A, X, SP
-static const Instruction instruction_lookup[256] = {
+
+static const CPU_Instruction instruction_lookup[256] = {
     // 0x00 - 0x0F
     {CPU_OP_BRK, CPU_ADDR_IMP,  7, 0},
     {CPU_OP_ORA, CPU_ADDR_IZX,  6, 0},
@@ -435,7 +440,7 @@ static const Instruction instruction_lookup[256] = {
     {CPU_OP_ISC, CPU_ADDR_ABSX, 7, 0}
 };
 
-void CPU_SetFlag(CPU *cpu, uint8_t flag, uint8_t value) 
+void CPU_SetFlag(CPU *cpu, uint8_t flag, uint8_t value)
 {
     if (value)
         cpu->status |= flag; // Set the flag
@@ -443,24 +448,23 @@ void CPU_SetFlag(CPU *cpu, uint8_t flag, uint8_t value)
         cpu->status &= ~flag; // Clear the flag
 }
 
-uint8_t CPU_GetFlag(CPU *cpu, uint8_t flag) 
+uint8_t CPU_GetFlag(CPU *cpu, uint8_t flag)
 {
     return (cpu->status & flag); // Return the status of the flag
 }
 
-// --- CPU Lifecycle Functions ---
-CPU *CPU_Create(NES *nes) {
+CPU *CPU_Create(NES *nes) 
+{
     CPU *cpu = malloc(sizeof(CPU));
     if (!cpu) return NULL;
     memset(cpu, 0, sizeof(CPU));
     cpu->nes = nes;
-    // Lookup table is now const and initialized at compile time.
-    // No need for CPU_InitializeLookupTable() or table_initialized flag.
     CPU_Reset(cpu);
     return cpu;
 }
 
-void CPU_Reset(CPU *cpu) {
+void CPU_Reset(CPU *cpu) 
+{
     cpu->a = 0;
     cpu->x = 0;
     cpu->y = 0;
@@ -470,42 +474,32 @@ void CPU_Reset(CPU *cpu) {
     cpu->total_cycles = 0;
 }
 
-void CPU_Destroy(CPU* cpu) {
+void CPU_Destroy(CPU *cpu) 
+{
     if (cpu)
         free(cpu);
 }
 
-// --- Main CPU Step Function ---
-int CPU_Step(CPU *cpu) {
-    //uint16_t initial_pc_debug = cpu->pc; // For debugging
-
+int CPU_Step(CPU *cpu) 
+{
     uint8_t opcode = BUS_Read(cpu->nes, cpu->pc++);
-    Instruction *inst = &instruction_lookup[opcode];
+    CPU_Instruction *inst = &instruction_lookup[opcode];
 
     bool page_crossed_by_addr = false;
     uint16_t effective_address = inst->addressing_mode(cpu, &page_crossed_by_addr);
 
     uint8_t current_opcode_cycles = inst->cycles;
-    if (page_crossed_by_addr && inst->add_cycles_on_page_cross) {
+    if (page_crossed_by_addr && inst->add_cycles_on_page_cross)
         current_opcode_cycles++;
-    }
 
     inst->operation(cpu, effective_address, &current_opcode_cycles);
-    
-    cpu->total_cycles += current_opcode_cycles;
 
-    // Example debug print (optional)
-    // debug_print("PC:%04X OP:%02X (%s) A:%02X X:%02X Y:%02X P:%02X SP:%02X ADDR:%04X CYC:%lu (+%u)\n",
-    //        initial_pc_debug, opcode, inst.name, cpu->a, cpu->x, cpu->y, cpu->status, cpu->sp, effective_address, cpu->total_cycles, current_opcode_cycles);
+    cpu->total_cycles += current_opcode_cycles;
 
     return current_opcode_cycles;
 }
 
-
-// --- CPU Operation Implementations ---
-// (These need to be fully implemented based on your previous code and 6502 specs)
-
-// Official Opcodes (Implementations from previous response, ensure they are complete)
+// Official Opcodes
 static void CPU_OP_ADC(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { (void)cycles_ref; uint8_t M = BUS_Read(cpu->nes, address); uint16_t temp = cpu->a + M + (CPU_GetFlag(cpu, CPU_FLAG_CARRY) ? 1 : 0); CPU_SetFlag(cpu, CPU_FLAG_CARRY, temp > 0xFF); CPU_SetFlag(cpu, CPU_FLAG_OVERFLOW, (~(cpu->a ^ M) & (cpu->a ^ (uint8_t)temp) & 0x80) != 0); cpu->a = (uint8_t)temp; CPU_UpdateZeroNegativeFlags(cpu, cpu->a); }
 static void CPU_OP_AND(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { (void)cycles_ref; cpu->a &= BUS_Read(cpu->nes, address); CPU_UpdateZeroNegativeFlags(cpu, cpu->a); }
 static void CPU_OP_ASL_A(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { (void)address; (void)cycles_ref; CPU_SetFlag(cpu, CPU_FLAG_CARRY, (cpu->a & 0x80) != 0); cpu->a <<= 1; CPU_UpdateZeroNegativeFlags(cpu, cpu->a); }
@@ -565,9 +559,11 @@ static void CPU_OP_TSX(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { (void)
 static void CPU_OP_TXA(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { (void)address; (void)cycles_ref; cpu->a = cpu->x; CPU_UpdateZeroNegativeFlags(cpu, cpu->a); }
 static void CPU_OP_TXS(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { (void)address; (void)cycles_ref; cpu->sp = cpu->x; }
 static void CPU_OP_TYA(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { (void)address; (void)cycles_ref; cpu->a = cpu->y; CPU_UpdateZeroNegativeFlags(cpu, cpu->a); }
+static void CPU_OP_NOP(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { (void)cpu; (void)address; (void)cycles_ref; }
 
-// Unofficial Opcode Implementations (stubs or simplified, expand as needed)
-static void CPU_OP_KIL(CPU *cpu, uint16_t address, uint8_t *cycles_ref) {
+// Unofficial Opcodes
+static void CPU_OP_KIL(CPU *cpu, uint16_t address, uint8_t *cycles_ref) 
+{
     (void)cpu; (void)address; (void)cycles_ref;
     // Typically halts the CPU. For emulation, you might loop indefinitely or set a halt flag.
     // For now, acts like a NOP that might take 2 cycles.
@@ -575,12 +571,10 @@ static void CPU_OP_KIL(CPU *cpu, uint16_t address, uint8_t *cycles_ref) {
     DEBUG_WARN("KIL instruction encountered at PC: %04X\n", cpu->pc - 1);
 }
 
-static void CPU_OP_NOP(CPU *cpu, uint16_t address, uint8_t *cycles_ref) {
-    (void)cpu; (void)address; (void)cycles_ref; // Acts like NOP
-}
-
-static void CPU_OP_SLO(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // ASL + ORA
+static void CPU_OP_SLO(CPU *cpu, uint16_t address, uint8_t *cycles_ref) 
+{ 
     (void)cycles_ref;
+    // ASL + ORA
     uint8_t M = BUS_Read(cpu->nes, address);
     CPU_SetFlag(cpu, CPU_FLAG_CARRY, (M & 0x80) != 0);
     M <<= 1;
@@ -589,8 +583,10 @@ static void CPU_OP_SLO(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // ASL
     CPU_UpdateZeroNegativeFlags(cpu, cpu->a);
 }
 
-static void CPU_OP_RLA(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // ROL + AND
+static void CPU_OP_RLA(CPU *cpu, uint16_t address, uint8_t *cycles_ref) 
+{ 
     (void)cycles_ref;
+    // ROL + AND
     uint8_t M = BUS_Read(cpu->nes, address);
     bool old_c = CPU_GetFlag(cpu, CPU_FLAG_CARRY);
     CPU_SetFlag(cpu, CPU_FLAG_CARRY, (M & 0x80) != 0);
@@ -601,8 +597,10 @@ static void CPU_OP_RLA(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // ROL
     CPU_UpdateZeroNegativeFlags(cpu, cpu->a);
 }
 
-static void CPU_OP_SRE(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // LSR + EOR
+static void CPU_OP_SRE(CPU *cpu, uint16_t address, uint8_t *cycles_ref) 
+{ 
     (void)cycles_ref;
+    // LSR + EOR
     uint8_t M = BUS_Read(cpu->nes, address);
     CPU_SetFlag(cpu, CPU_FLAG_CARRY, (M & 0x01) != 0);
     M >>= 1;
@@ -611,8 +609,10 @@ static void CPU_OP_SRE(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // LSR
     CPU_UpdateZeroNegativeFlags(cpu, cpu->a);
 }
 
-static void CPU_OP_RRA(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // ROR + ADC
+static void CPU_OP_RRA(CPU *cpu, uint16_t address, uint8_t *cycles_ref) 
+{
     (void)cycles_ref;
+    // ROR
     uint8_t M = BUS_Read(cpu->nes, address);
     bool old_c_ror = CPU_GetFlag(cpu, CPU_FLAG_CARRY);
     CPU_SetFlag(cpu, CPU_FLAG_CARRY, (M & 0x01) != 0); // Carry for ROR
@@ -620,7 +620,7 @@ static void CPU_OP_RRA(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // ROR
     if (old_c_ror) M |= 0x80;
     BUS_Write(cpu->nes, address, M);
 
-    // ADC part
+    // ADC
     uint16_t temp = cpu->a + M + (CPU_GetFlag(cpu, CPU_FLAG_CARRY) ? 1 : 0); // Use new carry from ROR
     CPU_SetFlag(cpu, CPU_FLAG_CARRY, temp > 0xFF); // Carry for ADC
     CPU_SetFlag(cpu, CPU_FLAG_OVERFLOW, (~(cpu->a ^ M) & (cpu->a ^ (uint8_t)temp) & 0x80) != 0);
@@ -628,33 +628,41 @@ static void CPU_OP_RRA(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // ROR
     CPU_UpdateZeroNegativeFlags(cpu, cpu->a);
 }
 
-static void CPU_OP_SAX(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // Store A & X
+static void CPU_OP_SAX(CPU *cpu, uint16_t address, uint8_t *cycles_ref) 
+{ 
     (void)cycles_ref;
+    // Store A & X
     BUS_Write(cpu->nes, address, cpu->a & cpu->x);
 }
 
-static void CPU_OP_LAX(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // LDA + LDX (or LDA + TAX)
+static void CPU_OP_LAX(CPU *cpu, uint16_t address, uint8_t *cycles_ref) 
+{
     (void)cycles_ref;
+    // LDA + LDX (or LDA + TAX)
     cpu->a = BUS_Read(cpu->nes, address);
     cpu->x = cpu->a;
     CPU_UpdateZeroNegativeFlags(cpu, cpu->a); // Flags based on A (same as X)
 }
 
-static void CPU_OP_DCP(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // DEC + CMP
+static void CPU_OP_DCP(CPU *cpu, uint16_t address, uint8_t *cycles_ref) 
+{ 
     (void)cycles_ref;
+    // DEC
     uint8_t M = BUS_Read(cpu->nes, address) - 1;
     BUS_Write(cpu->nes, address, M);
-    // CMP part (A - M)
+    // CMP
     uint8_t temp_cmp = cpu->a - M;
     CPU_SetFlag(cpu, CPU_FLAG_CARRY, cpu->a >= M);
     CPU_UpdateZeroNegativeFlags(cpu, temp_cmp);
 }
 
-static void CPU_OP_ISC(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // INC + SBC
+static void CPU_OP_ISC(CPU *cpu, uint16_t address, uint8_t *cycles_ref) 
+{ 
     (void)cycles_ref;
+    // INC
     uint8_t M = BUS_Read(cpu->nes, address) + 1;
     BUS_Write(cpu->nes, address, M);
-    // SBC part (A - M - (1-C))
+    // SBC
     uint16_t temp_sbc = cpu->a - M - (CPU_GetFlag(cpu, CPU_FLAG_CARRY) ? 0 : 1);
     CPU_SetFlag(cpu, CPU_FLAG_CARRY, !(temp_sbc > 0xFF));
     CPU_SetFlag(cpu, CPU_FLAG_OVERFLOW, ((cpu->a ^ M) & (cpu->a ^ (uint8_t)temp_sbc) & 0x80) != 0);
@@ -662,23 +670,29 @@ static void CPU_OP_ISC(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // INC
     CPU_UpdateZeroNegativeFlags(cpu, cpu->a);
 }
 
-static void CPU_OP_ANC(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // AND, C = N
+static void CPU_OP_ANC(CPU *cpu, uint16_t address, uint8_t *cycles_ref) 
+{ 
     (void)cycles_ref;
+    // AND, C = N
     cpu->a &= BUS_Read(cpu->nes, address); // For ANC #imm, address is immediate value
     CPU_UpdateZeroNegativeFlags(cpu, cpu->a);
     CPU_SetFlag(cpu, CPU_FLAG_CARRY, CPU_GetFlag(cpu, CPU_FLAG_NEGATIVE));
 }
 
-static void CPU_OP_ALR(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // AND #imm, LSR A
+static void CPU_OP_ALR(CPU *cpu, uint16_t address, uint8_t *cycles_ref) 
+{ 
     (void)cycles_ref;
+    // AND #imm, LSR A
     cpu->a &= BUS_Read(cpu->nes, address); // For ALR #imm, address is immediate value
     CPU_SetFlag(cpu, CPU_FLAG_CARRY, (cpu->a & 0x01) != 0);
     cpu->a >>= 1;
     CPU_UpdateZeroNegativeFlags(cpu, cpu->a);
 }
 
-static void CPU_OP_ARR(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // AND #imm, ROR A, special flags
+static void CPU_OP_ARR(CPU *cpu, uint16_t address, uint8_t *cycles_ref) 
+{ 
     (void)cycles_ref;
+    // AND #imm, ROR A, special flags
     cpu->a &= BUS_Read(cpu->nes, address); // For ARR #imm, address is immediate value
     bool old_c = CPU_GetFlag(cpu, CPU_FLAG_CARRY);
     // ROR A part
@@ -691,8 +705,10 @@ static void CPU_OP_ARR(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // AND
     CPU_SetFlag(cpu, CPU_FLAG_OVERFLOW, ((cpu->a & 0x40) ^ ((cpu->a & 0x20) << 1)) != 0); // (Bit6 XOR Bit5) of result to Overflow
 }
 
-static void CPU_OP_SBX(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // (A & X) - imm -> X
+static void CPU_OP_SBX(CPU *cpu, uint16_t address, uint8_t *cycles_ref) 
+{ 
     (void)cycles_ref;
+    // (A & X) - imm -> X
     uint8_t M = BUS_Read(cpu->nes, address); // For SBX #imm, address is immediate value
     uint16_t temp = (cpu->a & cpu->x) - M;
     CPU_SetFlag(cpu, CPU_FLAG_CARRY, !((cpu->a & cpu->x) < M)); // (A&X) >= M
@@ -700,8 +716,10 @@ static void CPU_OP_SBX(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // (A 
     CPU_UpdateZeroNegativeFlags(cpu, cpu->x);
 }
 
-static void CPU_OP_SHX(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // Store X & (HighByte(addr) + 1) -> addr
+static void CPU_OP_SHX(CPU *cpu, uint16_t address, uint8_t *cycles_ref) 
+{ 
     (void)cycles_ref;
+    // Store X & (HighByte(addr) + 1) -> addr
     // This is complex due to how address is formed for write.
     // For ABSY: addr = base + Y. Write to (base + Y). Data = X & (HighByte(base+Y) + 1)
     // This is simplified: assume 'address' is the final computed address.
@@ -713,15 +731,19 @@ static void CPU_OP_SHX(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // Sto
     BUS_Write(cpu->nes, address, data_to_write);
 }
 
-static void CPU_OP_SHY(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // Store Y & (HighByte(addr) + 1) -> addr
+static void CPU_OP_SHY(CPU *cpu, uint16_t address, uint8_t *cycles_ref) 
+{ 
     (void)cycles_ref;
+    // Store Y & (HighByte(addr) + 1) -> addr
     uint8_t high_byte_of_addr = (address >> 8) & 0xFF;
     uint8_t data_to_write = cpu->y & (high_byte_of_addr + 1);
     BUS_Write(cpu->nes, address, data_to_write);
 }
 
-static void CPU_OP_TAS(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // A&X -> SP; A&X & (H+1) -> M (unstable)
+static void CPU_OP_TAS(CPU *cpu, uint16_t address, uint8_t *cycles_ref) 
+{ 
     (void)cycles_ref;
+    // A&X -> SP; A&X & (H+1) -> M (unstable)
     cpu->sp = cpu->a & cpu->x;
     // The memory write part is often unstable and varies.
     // Simplified: just SP = A & X. Some emulators might implement the write.
@@ -731,15 +753,18 @@ static void CPU_OP_TAS(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // A&X
     // BUS_Write(cpu->nes, address, data_to_write);
 }
 
-static void CPU_OP_LAS(CPU *cpu, uint16_t address, uint8_t *cycles_ref) { // Mem & SP -> A, X, SP
+static void CPU_OP_LAS(CPU *cpu, uint16_t address, uint8_t *cycles_ref) 
+{ 
     (void)cycles_ref;
+    // Mem & SP -> A, X, SP
     uint8_t M = BUS_Read(cpu->nes, address);
     cpu->a = cpu->x = cpu->sp = (M & cpu->sp);
     CPU_UpdateZeroNegativeFlags(cpu, cpu->a);
 }
 
-// NMI and IRQ are external, not ops, but their handler logic:
-void CPU_NMI(CPU *cpu) {
+// Interupt Functions
+void CPU_NMI(CPU *cpu) 
+{
     CPU_Push16(cpu, cpu->pc);
     CPU_Push(cpu, (cpu->status & ~CPU_FLAG_BREAK) | CPU_FLAG_UNUSED);
     CPU_SetFlag(cpu, CPU_FLAG_INTERRUPT, true);
@@ -747,12 +772,13 @@ void CPU_NMI(CPU *cpu) {
     cpu->pc = BUS_Read16(cpu->nes, 0xFFFA);
 }
 
-void CPU_IRQ(CPU *cpu) {
+void CPU_IRQ(CPU *cpu) 
+{
     if (!CPU_GetFlag(cpu, CPU_FLAG_INTERRUPT)) {
         CPU_Push16(cpu, cpu->pc);
         CPU_Push(cpu, (cpu->status & ~CPU_FLAG_BREAK) | CPU_FLAG_UNUSED);
         CPU_SetFlag(cpu, CPU_FLAG_INTERRUPT, true);
-        cpu->total_cycles += 7; // IRQ fixed cycles
+        cpu->total_cycles += 7;
         cpu->pc = BUS_Read16(cpu->nes, 0xFFFE);
     }
 }
