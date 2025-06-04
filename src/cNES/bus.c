@@ -5,67 +5,74 @@
 
 uint8_t BUS_Read(NES* nes, uint16_t address) {
     // Handle CPU memory map (0x0000 - 0xFFFF)
-    if (address < 0x2000) { // Internal RAM
+    // Reordered checks to prioritize potentially more frequent accesses.
+
+    // PRG ROM ($8000-$FFFF) - Often highly accessed for instruction fetches.
+    if (address >= 0x8000) {
+        // Access within a 32KB window. Actual mapping depends on mapper and ROM size.
+        // For NROM, this handles 16KB ROMs (mirrored) or 32KB ROMs.
+        // Assumes nes->bus->prgRom points to a 32KB mapped region.
+        return nes->bus->prgRom[(address - 0x8000) & 0x7FFF];
+    }
+
+    // Internal RAM ($0000-$1FFF) - Frequently accessed for data, stack, zero-page.
+    // This path implies address < 0x8000.
+    if (address < 0x2000) {
         return nes->bus->memory[address & 0x07FF]; // 2KB RAM, mirrored every 0x0800 bytes
-    } else if (address >= 0x2000 && address < 0x4000) { // PPU Registers
+    }
+
+    // PPU Registers ($2000-$3FFF) - Accessed during rendering and by game logic.
+    // This path implies address >= 0x2000 and address < 0x8000.
+    if (address < 0x4000) { // True for $2000-$3FFF
         // PPU registers ($2000-$2007), mirrored every 8 bytes up to $3FFF
         return PPU_ReadRegister(nes->ppu, 0x2000 + (address & 0x0007));
-    } else if (address == 0x4016) { // Controller 1 Read
-        uint8_t result = nes->controller_shift[0] & 0x01;
-        if (nes->controller_strobe) {
-            result = nes->controllers[0] & 0x01; // Only bit 0 is returned if strobe is active
-        } else {
-            nes->controller_shift[0] >>= 1;
-            // On real hardware, bits 1-4 might be open bus or return fixed values after shifting all 8 bits.
-            // For simplicity, we allow it to shift to 0. Bit 0 is the important one.
-            // Some emulators return 1 for bits after the 8 data bits have been shifted out for $4016.
-        }
-        // Bits 1-7 are typically open bus, returning a mix of values.
-        // Returning just bit 0 is a common simplification.
-        // For more accuracy, one might return (result | (BUS_Peek(nes, address) & 0xFE)) or similar.
-        return result; // Only bit 0 is significant
-    } else if (address == 0x4017) { // Controller 2 Read
-        uint8_t result = nes->controller_shift[1] & 0x01;
-        if (nes->controller_strobe) {
-            result = nes->controllers[1] & 0x01;
-        } else {
-            nes->controller_shift[1] >>= 1;
-        }
-        // Similar to 0x4016, only bit 0 is significant.
-        // Some emulators might return fixed values (e.g. from an expansion device) on other bits.
-        return result;
-    } else if (address >= 0x4000 && address < 0x4020) { // APU and I/O Registers
-        // APU registers are mostly write-only or have specific read behavior (e.g., status reads)
-        // Not fully implemented here, typically returns open bus or last written value.
-        // $4015: APU Status Read
-        // For now, returning 0 for unhandled IO reads in this range besides controllers.
-        return 0; // Placeholder for APU/IO reads
-    } else if (address >= 0x6000 && address < 0x8000) { // PRG RAM (WRAM)
-        // PRG RAM (if present, typically battery-backed save RAM)
-        // This example doesn't explicitly model a separate PRG RAM in nes->bus struct.
-        // If mappers provide it, they would handle it.
-        // For now, returning 0 as if no PRG RAM or it's not enabled.
-        return 0; // Placeholder for PRG RAM
-    } else if (address >= 0x8000) { // PRG ROM
-        // $8000-$FFFF: PRG ROM
-        // Mapper might alter this address. For NROM, it's direct.
-        // Assuming nes->bus->prgRom is 32KB and correctly loaded/mirrored for 16KB ROMs.
-        //return nes->bus->prgRom[address & (nes->bus->prgRomSize * 0x4000 -1)]; // Mask to PRG ROM size
-        // Simpler NROM: return nes->bus->prgRom[address - 0x8000]; (if prgRom is exactly 32KB for $8000-$FFFF)
-        // A more robust solution would be:
-        // if (nes->bus->prgRomSize == 1) { // 16KB ROM, mirrored
-        //    return nes->bus->prgRom[(address - 0x8000) & 0x3FFF];
-        // } else { // 32KB ROM (or more, handled by mapper)
-        //    return nes->bus->prgRom[(address - 0x8000)]; // Assumes mapper handles larger ROMs
-        // }
-        // For now, using a common NROM-like access:
-        return nes->bus->prgRom[(address - 0x8000) & 0x7FFF]; // Access within a 32KB window
-                                                              // Actual mapping depends on mapper and ROM size.
-                                                              // For this example, let's assume prgRom array is 32KB
-                                                              // and loaded appropriately (16KB ROMs mirrored).
     }
-    // Default for unmapped regions (e.g. 0x4020-0x5FFF) is often open bus.
-    // Open bus behavior returns the last value read or a mix of things.
+
+    // APU and I/O Registers ($4000-$401F)
+    // This path implies address >= 0x4000 and address < 0x8000.
+    if (address < 0x4020) { // True for $4000-$401F
+        if (address == 0x4016) { // Controller 1 Read
+            uint8_t result;
+            if (nes->controller_strobe) {
+                result = nes->controllers[0] & 0x01; // Only bit 0 is returned if strobe is active
+            } else {
+                result = nes->controller_shift[0] & 0x01;
+                nes->controller_shift[0] >>= 1;
+                // On real hardware, bits 1-4 might be open bus or return fixed values after shifting all 8 bits.
+                // Some emulators return 1 for bits after the 8 data bits have been shifted out.
+            }
+            // Bits 1-7 are typically open bus. Returning just bit 0 is a common simplification.
+            return result; // Only bit 0 is significant
+        }
+        if (address == 0x4017) { // Controller 2 Read
+            uint8_t result;
+            if (nes->controller_strobe) {
+                result = nes->controllers[1] & 0x01;
+            } else {
+                result = nes->controller_shift[1] & 0x01;
+                nes->controller_shift[1] >>= 1;
+            }
+            // Similar to 0x4016, only bit 0 is significant.
+            // Other bits might return fixed values from an expansion device.
+            return result;
+        }
+        // APU registers are mostly write-only or have specific read behavior (e.g., $4015 status read).
+        // For now, returning 0 for unhandled IO reads in $4000-$4015 and $4018-$401F.
+        return 0; // Placeholder for APU/IO reads
+    }
+
+    // PRG RAM (WRAM) ($6000-$7FFF)
+    // This path implies address >= 0x4020 and address < 0x8000.
+    if (address >= 0x6000) { // True for $6000-$7FFF
+        // PRG RAM (if present, typically battery-backed save RAM).
+        // Behavior depends on mapper and cartridge configuration.
+        // Returning 0 as if no PRG RAM or it's not enabled.
+        return 0; // Placeholder for PRG RAM
+    }
+
+    // Unmapped region ($4020-$5FFF)
+    // This path implies address >= 0x4020 and address < 0x6000.
+    // Open bus behavior (returning last value read, etc.) is complex.
     // Returning 0 is a simplification.
     return 0;
 }

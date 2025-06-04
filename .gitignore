@@ -5,6 +5,7 @@
 /.vscode/
 
 /ext/cimgui/*
+imgui.ini
 
 *.key
 

@@ -56,11 +56,12 @@ extern CPU_Opcode cpu_opcodes[256];
 CPU *CPU_Create(NES *nes);
 void CPU_Reset(CPU* cpu);
 int CPU_Step(CPU* cpu);
+void CPU_Destroy(CPU* cpu);
 
 void CPU_Interupt(CPU* cpu);
 void CPU_NMI(CPU* cpu);
 
-void CPU_SetFlag(CPU* cpu, uint8_t flag, int value);
+void CPU_SetFlag(CPU* cpu, uint8_t flag, uint8_t value);
 uint8_t CPU_GetFlag(CPU* cpu, uint8_t flag);
 
 #endif // CPU_H

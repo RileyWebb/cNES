@@ -9,3 +9,10 @@
 	path = ext/sdl
 	url = https://github.com/libsdl-org/SDL
 	branch = release-3.2.x
+[submodule "ext/cjson"]
+	path = ext/cjson
+	url = https://github.com/mvieth/cJSON/
+	branch = cmake4
+[submodule "ext/minizip-ng"]
+	path = ext/minizip-ng
+	url = https://github.com/zlib-ng/minizip-ng

@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include <malloc.h>
 #include <math.h> // For fabsf in scalar color emphasis, or general float math
-
+#define PPU_USE_SIMD_COLOR_EMPHASIS
 
 #ifdef __AVX2__ //AVX2
 
@@ -366,11 +366,11 @@ PPU *PPU_Create(NES *nes) {
     // Allocate framebuffer with alignment for potential SIMD operations
     size_t framebuffer_size = PPU_FRAMEBUFFER_WIDTH * PPU_FRAMEBUFFER_HEIGHT * sizeof(uint32_t);
 
-#if defined(_MSC_VER)
-    #include <stdlib.h> // Ensure aligned_alloc is declared
-    ppu->framebuffer = _aligned_alloc(16, framebuffer_size);
-#elif __STDC_VERSION__ >= 201112L
+#if defined(__MINGW32__) || defined(__MINGW64__)
     ppu->framebuffer = _aligned_malloc(framebuffer_size, 16);
+#elif __STDC_VERSION__ >= 201112L
+    #include <stdlib.h> // Ensure aligned_alloc is declared
+    ppu->framebuffer = aligned_alloc(16, framebuffer_size);
 #else
     // Fallback: use regular calloc, alignment not guaranteed but often works for 16-bytes on modern systems.
     // Or use posix_memalign if available.
@@ -485,7 +485,7 @@ uint8_t PPU_ReadRegister(PPU *ppu, uint16_t addr) {
 }
 
 void PPU_WriteRegister(PPU *ppu, uint16_t addr, uint8_t value) {
-    // ppu->data_buffer = value; // Some emulators update data_buffer on any PPU write for open bus.
+    ppu->data_buffer = value;   // Some emulators update data_buffer on any PPU write for open bus.
                                 // NESDev implies it's more specifically related to PPU bus activity.
                                 // For now, keep data_buffer updated by PPUDATA reads mostly.
     
@@ -494,8 +494,16 @@ void PPU_WriteRegister(PPU *ppu, uint16_t addr, uint8_t value) {
             ppu->ctrl = value;
             ppu->nmi_output = (value & PPUCTRL_NMI_ENABLE) != 0;
             ppu->temp_addr = (ppu->temp_addr & 0xF3FF) | ((uint16_t)(value & 0x03) << 10);
+
+            // If NMI is enabled and VBlank is active (VBlank flag set and VBlank event occurred this frame),
+            // ensure the NMI line is asserted. This handles enabling NMI during VBlank.
             if (ppu->nmi_output && (ppu->status & PPUSTATUS_VBLANK) && ppu->nmi_occured) {
                 ppu->nmi_interrupt_line = true; 
+            }
+            // If NMI is disabled by this write, the NMI line must be deasserted.
+            // This ensures the NMI line accurately reflects the state of PPUCTRL bit 7.
+            if (!ppu->nmi_output) {
+                ppu->nmi_interrupt_line = false;
             }
             break;
 
