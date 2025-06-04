@@ -23,8 +23,8 @@ int main(int argc, char **argv)
 
     NES* nes = NES_Create();
 
-    NES_Load(nes, ROM_LoadFile("/home/riley/Downloads/Super Mario Bros..nes")); // Load default ROM or NULL for no ROM
-    //NES_Load(nes, ROM_LoadFile("C:/Users/Riley/Downloads/Super Mario Bros..nes")); // Load default ROM or NULL for no ROM
+    //NES_Load(nes, ROM_LoadFile("/home/riley/Downloads/Super Mario Bros..nes")); // Load default ROM or NULL for no ROM
+    NES_Load(nes, ROM_LoadFile("C:/Users/Riley/Downloads/Super Mario Bros..nes")); // Load default ROM or NULL for no ROM
     ui_paused = false;
     //NES_Load(nes, NULL);
     //NES_Load("nestest.nes", nes);

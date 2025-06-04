@@ -483,7 +483,7 @@ void CPU_Destroy(CPU *cpu)
 int CPU_Step(CPU *cpu) 
 {
     uint8_t opcode = BUS_Read(cpu->nes, cpu->pc++);
-    CPU_Instruction *inst = &instruction_lookup[opcode];
+    const CPU_Instruction *inst = &instruction_lookup[opcode];
 
     bool page_crossed_by_addr = false;
     uint16_t effective_address = inst->addressing_mode(cpu, &page_crossed_by_addr);
