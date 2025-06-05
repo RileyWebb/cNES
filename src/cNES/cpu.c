@@ -16,7 +16,7 @@ typedef void (*op_func_ptr)(CPU *cpu, uint16_t address, uint8_t *cycles_ref);
 // Structure for an instruction in the lookup table
 typedef struct {
     op_func_ptr operation;              // Pointer to the CPU operation function
-    addr_mode_func_ptr addressing_mode;  // Pointer to the addressing mode function
+    addr_mode_func_ptr addressing_mode; // Pointer to the addressing mode function
     uint8_t cycles;                     // Base CPU cycles for the instruction
     uint8_t add_cycles_on_page_cross;   // 1 if read op with page-crossing addr mode adds cycle, 0 otherwise
 } CPU_Instruction;

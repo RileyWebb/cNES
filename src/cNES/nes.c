@@ -16,9 +16,8 @@ NES *NES_Create()
     if (!nes) {goto error;}
     memset(nes, 0, sizeof(NES)); // Initialize NES structure to zero
 
-    nes->bus = malloc(sizeof(BUS));
+    nes->bus = BUS_Create(nes);
     if (!nes->bus) {goto error;}
-    memset(nes->bus, 0, sizeof(BUS)); // Initialize BUS structure to zero
 
     nes->cpu = CPU_Create(nes);
     if (!nes->cpu) {goto error;}
@@ -55,11 +54,11 @@ int NES_Load(NES* nes, ROM* rom)
     uint8_t *chr_data_temp = NULL;
     uint8_t *trainer_data_temp = NULL;
 
-    nes->rom = rom;
-    if (!nes->rom) {
-        // ROM_LoadFile should ideally log its own error.
-        goto error_rom_load;
+    if (!rom) {
+        DEBUG_ERROR("NES_Load: ROM is NULL.");
+        return -1; // Error: No ROM to load
     }
+    nes->rom = rom;
 
     // Extract metadata from the ROM structure and its header
     uint8_t prg_rom_banks = nes->rom->header[4];

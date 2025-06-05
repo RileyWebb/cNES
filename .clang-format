@@ -1,4 +1,9 @@
 BasedOnStyle: LLVM
 BraceWrapping:
   AfterFunction: true
+UseTab: Always
+IndentWidth: 4
+TabWidth: 4
+PointerAlignment: Right
+ColumnLimit: 80
 BreakBeforeBraces: Stroustrup
