@@ -1,3 +1,14 @@
+#ifdef defined(__GNUC__) && defined(__x86_64__) && !defined(__APPLE__)
+#define USE_INLINE_X86_ASM
+#elif defined(_MSC_VER) && defined(_M_X64)
+#define USE_INLINE_X86_ASM
+#else
+#undef USE_INLINE_X86_ASM
+#endif
+
+
+#ifdef USE_INLINE_X86_ASM
+
 #include <stdint.h>
 #include <stdio.h> // For printf in example and unknown opcode message
 
@@ -181,3 +192,5 @@ int main() {
     return 0;
 }
 */
+
+#endif // USE_INLINE_X86_ASM

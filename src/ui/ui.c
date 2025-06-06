@@ -785,7 +785,7 @@ void UI_MemoryViewer(NES *nes)
                         igText("--");
                         continue;
                     }
-                    uint8_t value = BUS_Peek(nes, currentAddr);
+                    uint8_t value = BUS_Read(nes, currentAddr);
                     uint8_t prevValue = ui_memorySnapshot[currentAddr];
 
                     if (nes->cpu && !ui_paused)

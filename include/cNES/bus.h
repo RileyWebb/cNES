@@ -16,10 +16,6 @@ typedef struct BUS {
     uint8_t* vram;          // PPU VRAM for nametables ($2000-$2FFF in PPU space), typically 2KB
     uint8_t* palette_ram;   // PPU Palette RAM ($3F00-$3F1F in PPU space), 32 bytes
 
-    // Cartridge-specific data (pointers to data loaded from ROM file)
-    uint8_t* prg_rom_data;
-    uint8_t* chr_mem_data;  // Can be CHR ROM or CHR RAM
-
     // Cartridge properties
     Mapper *mapper; // Pointer to the mapper structure for cartridge handling
 
