@@ -16,3 +16,9 @@
 [submodule "ext/minizip-ng"]
 	path = ext/minizip-ng
 	url = https://github.com/zlib-ng/minizip-ng
+[submodule "ext/luajit-cmake"]
+	path = ext/luajit-cmake
+	url = https://github.com/zhaozg/luajit-cmake
+[submodule "ext/luajit-src"]
+	path = ext/luajit-src
+	url = https://github.com/LuaJIT/LuaJIT
