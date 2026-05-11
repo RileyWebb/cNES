@@ -1,4 +1,48 @@
+# Project-specific clang-format rules for the cNES codebase
+# Inferred from existing sources in src/:
+# - 4-space indentation
+# - Spaces (no tabs)
+# - Function opening brace on its own line, control statements attached
+# - Left pointer alignment (e.g. "uint8_t *ptr")
+
 BasedOnStyle: LLVM
+
+# Indentation
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ContinuationIndentWidth: 4
+
+# Wrapping and line length
+ColumnLimit: 120
+
+# Brace placement: functions on their own line, control statements attached
+BreakBeforeBraces: Custom
 BraceWrapping:
   AfterFunction: true
-BreakBeforeBraces: Stroustrup
+  AfterControlStatement: false
+  AfterClass: false
+  AfterNamespace: false
+  BeforeElse: false
+
+# Pointer style
+PointerAlignment: Right
+DerivePointerAlignment: false
+
+# Allow short constructs on one line (used in many inline helpers)
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: true
+AllowShortLoopsOnASingleLine: true
+
+# Spaces and alignment
+SpaceBeforeParens: ControlStatements
+SpacesBeforeTrailingComments: 1
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: true
+
+# Keep existing include ordering/sorting; avoid aggressive reordering
+SortIncludes: false
+
+# Don't reflow long comments automatically
+ReflowComments: false
+

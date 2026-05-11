@@ -86,16 +86,21 @@ typedef struct PPU {
     uint8_t  fine_x;     // Fine X scroll (3 bits - used by pixel rendering)
     uint8_t  addr_latch; // Write toggle for $2005 (PPUSCROLL) & $2006 (PPUADDR) (0: first write, 1: second write)
     uint8_t  data_buffer;// Read buffer for PPUDATA ($2007)
+    uint8_t  open_bus;   // Last value on the PPU data bus
+    uint64_t open_bus_last_update_ms; // Monotonic timestamp used to decay open bus bits
 
     // Timing and Frame State
     int   scanline;      // Current scanline being processed (-1/261 for pre-render, 0-239 visible, 240 post, 241-260 VBlank)
     int   cycle;         // Current PPU clock cycle on the scanline (0-340)
     bool  frame_odd;     // True if the current frame is odd (for cycle skip on pre-render line)
+    uint64_t frame_count; // Counts completed PPU frames
 
     // NMI (Non-Maskable Interrupt) State
     bool nmi_occured;         // Flag: VBlank period has started (set at SL241, C1; cleared at PreRender SL, C1)
     bool nmi_output;          // Flag: NMI generation enabled via PPUCTRL bit 7
     bool nmi_interrupt_line;  // Actual state of the NMI line to the CPU (true if NMI should be asserted)
+    bool previous_nmi_output; // Previous NMI condition used to edge-trigger assertions
+    bool suppress_vblank_start; // Set when $2002 is read on the VBlank-set cycle
 
     // Background Rendering Pipeline State (Latches and Shifters)
     uint8_t  bg_nt_latch;            // Nametable byte (tile index) latched for current/next tile
@@ -140,6 +145,11 @@ uint8_t PPU_ReadRegister(PPU *ppu, uint16_t addr);
 void PPU_WriteRegister(PPU *ppu, uint16_t addr, uint8_t value);
 void PPU_DoOAMDMA(PPU *ppu, const uint8_t *dma_page_data); // Handles $4014 OAM DMA transfer
 
+// --- PPU Open Bus Functions (CPU bus interface) ---
+// These functions manage the PPU's open bus value, which decays over time
+void PPU_DriveOpenBus(PPU *ppu, uint8_t value); // Update PPU open bus with a new value from CPU
+uint8_t PPU_GetOpenBusWithDecay(PPU *ppu); // Get PPU open bus value with decay applied
+
 // --- PPU Bus Access Functions (Mapper interface for CHR) ---
 // These are typically called by the bus module, which in turn calls mapper functions.
 // Not usually called directly from CPU emulation.
@@ -154,7 +164,7 @@ void PPU_TriggerNMI(PPU *ppu); // Triggers NMI if enabled (not usually called di
 
 // --- UI and Debugging Helper Functions ---
 const uint32_t* PPU_GetFramebuffer(PPU* ppu);
-const uint32_t* PPU_GetPalette(void); // Returns pointer to the static master NES palette
+const uint32_t* PPU_GetPalette(PPU *ppu); // Returns pointer to the static master NES palette
 const uint8_t* PPU_GetPaletteRAM(PPU* ppu); // Returns pointer to PPU's internal palette RAM
 const uint8_t* PPU_GetOAM(PPU* ppu);
 const uint8_t* PPU_GetNametable(PPU* ppu, int index); // Gets a pointer to a nametable based on mirroring

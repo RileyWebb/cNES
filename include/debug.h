@@ -1,3 +1,4 @@
+#pragma once
 #include <stdlib.h>
 #include <sys/time.h>
 #include <stdarg.h>
@@ -86,3 +87,4 @@ void DEBUG_WriteLog(int level, const char *file, int line, const char *fmt, ...)
 int DEBUG_RegisterBuffer(void *buffer);
 int DEBUG_RegisterCallback(debug_log_callback callback);
 void DEBUG_Flush();
+

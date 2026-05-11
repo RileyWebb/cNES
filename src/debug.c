@@ -5,7 +5,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <stdio.h>
-#include <signal.h>
+//#include <signal.h>
 
 #include "debug.h"
 
@@ -109,11 +109,12 @@ void DEBUG_WriteLog(int level, const char *file, int line, const char *fmt, ...)
 
 int DEBUG_RegisterCallback(debug_log_callback callback) 
 {
-    for (int i = 0; i < MAX_BUFFERS; i++)
-    if (!ctx.callbacks[i]) {
-        ctx.callbacks[i] = callback;
-        return 0;
-    }
+    for (int i = 0; i < MAX_BUFFERS; i++) {
+        if (!ctx.callbacks[i]) {
+            ctx.callbacks[i] = callback;
+            return 0;
+        }
+}
 
     return -1;
 }
