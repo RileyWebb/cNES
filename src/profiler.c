@@ -1,215 +1,213 @@
 #include "profiler.h"
-#include <SDL3/SDL.h> // For SDL_GetPerformanceCounter, SDL_GetPerformanceFrequency
-#include <string.h>   // For strncpy, strcmp
-#include <stdio.h>    // For snprintf
-#include <float.h>    // For DBL_MAX, DBL_MIN
+#include <SDL3/SDL.h>
+#include <string.h>
+#include <stdio.h> // For snprintf, if used by user for section names.
 
-static Profiler g_profiler_instance;
-static bool g_profiler_enabled = true;
+// These constants are expected to be defined in profiler.h or a shared config.
+// For example:
+// #define PROFILER_MAX_SECTIONS 64
+// #define PROFILER_SECTION_NAME_LEN 64
+// #define PROFILER_HISTORY_SIZE 120
 
-void Profiler_Init(void) {
-    memset(&g_profiler_instance, 0, sizeof(Profiler));
-    g_profiler_instance.perf_freq = SDL_GetPerformanceFrequency();
-    g_profiler_instance.frame_history_idx = 0;
-    g_profiler_instance.current_fps = 0.0f;
-    g_profiler_instance.current_frame_time_ms = 0.0;
-    g_profiler_instance.avg_frame_time_ms = 0.0;
-    g_profiler_instance.max_frame_time_ms = 0.0;
-    g_profiler_instance.num_sections = 0;
+// The ProfilerSection struct remains the same.
+// Its instances in g_profiler.sections will hold data from the *previous* completed frame.
+// Its instances in g_profiler.write_sections_buffer will be used for the *current* frame.
 
-    for (int i = 0; i < PROFILER_HISTORY_SIZE; ++i) {
-        g_profiler_instance.frame_times_ms[i] = 0.0;
-    }
-    for (int i = 0; i < PROFILER_MAX_SECTIONS; ++i) {
-        g_profiler_instance.sections[i].history_idx = 0;
-        g_profiler_instance.sections[i].current_time_ms = 0.0;
-        g_profiler_instance.sections[i].avg_time_ms = 0.0;
-        g_profiler_instance.sections[i].max_time_ms = 0.0;
-        g_profiler_instance.sections[i].active = false;
-        g_profiler_instance.sections[i].parent_id = -1;
-        g_profiler_instance.sections[i].depth = 0;
-        g_profiler_instance.sections[i].start_time_in_frame_ms = 0.0;
-        for (int j = 0; j < PROFILER_HISTORY_SIZE; ++j) {
-            g_profiler_instance.sections[i].times[j] = 0.0;
-        }
-    }
-    g_profiler_instance.section_stack_top = -1;
-    g_profiler_instance.last_frame_flame_items_count = 0;
-    // g_profiler_instance.current_cpu_utilization = 0.0f; // Already initialized by memset
-    // g_profiler_instance.current_gpu_utilization = 0.0f; // Already initialized by memset
+void Profiler_Init(void)
+{
+    memset(&g_profiler, 0, sizeof(Profiler));
+    g_profiler.perf_freq = SDL_GetPerformanceFrequency();
+    g_profiler.num_sections = 0; // Initialize read view section count
+    g_profiler.num_write_sections = 0; // Initialize write buffer section count
 }
 
-void Profiler_Shutdown(void) {
-    // Nothing to dynamically allocate/deallocate in the current simple version
+void Profiler_Shutdown(void)
+{
+    // Nothing specific to clean up for this simplified version
 }
 
-void Profiler_Enable(bool enable) {
+void Profiler_Enable(bool enable)
+{
     g_profiler_enabled = enable;
-    if (!g_profiler_enabled) {
-        // Optionally reset profiler state when disabled
-        Profiler_Init(); // Re-initialize to clear old data
-    }
 }
 
-bool Profiler_IsEnabled(void) {
+bool Profiler_IsEnabled(void)
+{
     return g_profiler_enabled;
 }
 
-const Profiler* Profiler_GetInstance(void) {
-    return &g_profiler_instance;
+Profiler* Profiler_GetInstance(void)
+{
+    return &g_profiler; // g_profiler now contains the "read" view
 }
 
-void Profiler_BeginFrame(void) {
+void Profiler_BeginFrame(void)
+{
     if (!g_profiler_enabled) return;
-    g_profiler_instance.frame_start_ticks = SDL_GetPerformanceCounter();
-    g_profiler_instance.section_stack_top = -1; // Reset section stack for the new frame
-    g_profiler_instance.last_frame_flame_items_count = 0; // Clear items for the new flame graph
+
+    g_profiler.current_processing_frame_start_ticks = SDL_GetPerformanceCounter();
+
+    // Reset per-frame aggregates for all sections in the write buffer
+    for (int i = 0; i < g_profiler.num_write_sections; i++) {
+        g_profiler.write_sections_buffer[i].total_ticks_this_frame = 0;
+        g_profiler.write_sections_buffer[i].call_count_this_frame = 0;
+        g_profiler.write_sections_buffer[i].total_time_this_frame_ms = 0.0;
+        g_profiler.write_sections_buffer[i].start_ticks_for_current_call = 0;
+    }
 }
 
-void Profiler_EndFrame(void) {
-    if (!g_profiler_enabled || g_profiler_instance.perf_freq == 0) return;
+void Profiler_EndFrame(void)
+{
+    if (!g_profiler_enabled || g_profiler.perf_freq == 0) return;
 
     uint64_t end_ticks = SDL_GetPerformanceCounter();
-    double frame_duration_s = (double)(end_ticks - g_profiler_instance.frame_start_ticks) / g_profiler_instance.perf_freq;
-    g_profiler_instance.current_frame_time_ms = frame_duration_s * 1000.0;
+    uint64_t frame_duration_ticks = end_ticks - g_profiler.current_processing_frame_start_ticks;
+    double processed_frame_time_ms = (double)frame_duration_ticks * 1000.0 / g_profiler.perf_freq;
 
-    g_profiler_instance.frame_times_ms[g_profiler_instance.frame_history_idx] = g_profiler_instance.current_frame_time_ms;
-    g_profiler_instance.frame_history_idx = (g_profiler_instance.frame_history_idx + 1) % PROFILER_HISTORY_SIZE;
+    // Update frame time history for FPS calculation using the just processed frame's time
+    g_profiler.frame_times[g_profiler.frame_history_idx] = processed_frame_time_ms;
+    g_profiler.frame_history_idx = (g_profiler.frame_history_idx + 1) % PROFILER_HISTORY_SIZE;
 
-    // Calculate FPS and average/max frame times over the history
-    double sum_frame_time = 0.0;
-    g_profiler_instance.max_frame_time_ms = 0.0;
+    // Calculate frame statistics (avg, max, fps) based on history
+    double sum_frame_times = 0.0;
+    double max_ft_hist = 0.0;
     int valid_samples = 0;
-    for (int i = 0; i < PROFILER_HISTORY_SIZE; ++i) {
-        if (g_profiler_instance.frame_times_ms[i] > 0.00001) { // Consider non-zero times
-            sum_frame_time += g_profiler_instance.frame_times_ms[i];
-            if (g_profiler_instance.frame_times_ms[i] > g_profiler_instance.max_frame_time_ms) {
-                g_profiler_instance.max_frame_time_ms = g_profiler_instance.frame_times_ms[i];
+
+    for (int i = 0; i < PROFILER_HISTORY_SIZE; i++) {
+        if (g_profiler.frame_times[i] > 0.000001) {
+            sum_frame_times += g_profiler.frame_times[i];
+            if (g_profiler.frame_times[i] > max_ft_hist) {
+                max_ft_hist = g_profiler.frame_times[i];
             }
             valid_samples++;
         }
     }
-
-    if (valid_samples > 0) {
-        g_profiler_instance.avg_frame_time_ms = sum_frame_time / valid_samples;
-        if (g_profiler_instance.avg_frame_time_ms > 0.00001) {
-            g_profiler_instance.current_fps = (float)(1000.0 / g_profiler_instance.avg_frame_time_ms);
-        } else {
-            g_profiler_instance.current_fps = 0.0f;
-        }
-    } else {
-        g_profiler_instance.avg_frame_time_ms = 0.0;
-        g_profiler_instance.current_fps = 0.0f;
-    }
     
-    // TODO: Update g_profiler_instance.current_cpu_utilization
-    // TODO: Update g_profiler_instance.current_gpu_utilization
+    double avg_ft_hist = 0.0;
+    float fps_hist = 0.0f;
+    if (valid_samples > 0) {
+        avg_ft_hist = sum_frame_times / valid_samples;
+        fps_hist = (avg_ft_hist > 0.000001) ? (float)(1000.0 / avg_ft_hist) : 0.0f;
+    }
 
-    // Update section averages
-    for (int i = 0; i < g_profiler_instance.num_sections; ++i) {
-        double section_sum = 0;
-        int section_samples = 0;
-        g_profiler_instance.sections[i].max_time_ms = 0.0;
-        for (int j = 0; j < PROFILER_HISTORY_SIZE; ++j) {
-            if (g_profiler_instance.sections[i].times[j] > 0.00001) {
-                section_sum += g_profiler_instance.sections[i].times[j];
-                if (g_profiler_instance.sections[i].times[j] > g_profiler_instance.sections[i].max_time_ms) {
-                    g_profiler_instance.sections[i].max_time_ms = g_profiler_instance.sections[i].times[j];
-                }
-                section_samples++;
-            }
-        }
-        if (section_samples > 0) {
-            g_profiler_instance.sections[i].avg_time_ms = section_sum / section_samples;
+    // Finalize section times in the write buffer
+    for (int i = 0; i < g_profiler.num_write_sections; i++) {
+        ProfilerSection* sec_write = &g_profiler.write_sections_buffer[i];
+        if (g_profiler.perf_freq > 0) {
+            sec_write->total_time_this_frame_ms =
+                (double)sec_write->total_ticks_this_frame * 1000.0 / g_profiler.perf_freq;
         } else {
-            g_profiler_instance.sections[i].avg_time_ms = 0.0;
+            sec_write->total_time_this_frame_ms = 0.0;
         }
+    }
+
+    // --- Copy data from write buffer to read buffer (g_profiler main fields) ---
+    g_profiler.current_frame_time_ms = processed_frame_time_ms;
+    g_profiler.avg_frame_time_ms = avg_ft_hist;
+    g_profiler.max_frame_time_ms = max_ft_hist; // Max from history, not just current frame
+    g_profiler.current_fps = fps_hist;
+
+    // Copy section data
+    g_profiler.num_sections = g_profiler.num_write_sections;
+    for (int i = 0; i < g_profiler.num_write_sections; i++) {
+        // Deep copy the section data from write buffer to read buffer
+        // Note: start_ticks_for_current_call is copied but is stale/irrelevant for the read view.
+        memcpy(&g_profiler.sections[i], &g_profiler.write_sections_buffer[i], sizeof(ProfilerSection));
     }
 }
 
-int Profiler_BeginSection(const char* name) {
-    if (!g_profiler_enabled || !name) return -1;
+static int Profiler_Internal_GetOrCreateSection(const char* name) {
+    if (!name) return -1;
 
-    int section_id = -1;
-    for (int i = 0; i < g_profiler_instance.num_sections; ++i) {
-        if (strcmp(g_profiler_instance.sections[i].name, name) == 0) {
-            section_id = i;
-            break;
+    // Operate on the write buffer
+    for (int i = 0; i < g_profiler.num_write_sections; i++) {
+        if (strncmp(g_profiler.write_sections_buffer[i].name, name, PROFILER_SECTION_NAME_LEN) == 0) {
+            return i;
         }
     }
 
-    if (section_id == -1) { // New section
-        if (g_profiler_instance.num_sections >= PROFILER_MAX_SECTIONS) {
-            return -1; // No space for new section
-        }
-        section_id = g_profiler_instance.num_sections++;
-        ProfilerSection* new_sec = &g_profiler_instance.sections[section_id];
-        strncpy(new_sec->name, name, PROFILER_SECTION_NAME_LEN - 1);
-        new_sec->name[PROFILER_SECTION_NAME_LEN - 1] = '\0';
-        new_sec->history_idx = 0;
-        new_sec->current_time_ms = 0.0;
-        new_sec->avg_time_ms = 0.0;
-        new_sec->max_time_ms = 0.0;
-        for(int j=0; j<PROFILER_HISTORY_SIZE; ++j) new_sec->times[j] = 0.0;
+    if (g_profiler.num_write_sections >= PROFILER_MAX_SECTIONS) {
+        return -1; // No space for new section in write buffer
     }
 
-    ProfilerSection* sec = &g_profiler_instance.sections[section_id];
-    sec->start_ticks = SDL_GetPerformanceCounter();
-    sec->active = true;
+    int id = g_profiler.num_write_sections++;
+    ProfilerSection* sec = &g_profiler.write_sections_buffer[id];
 
-    // Hierarchy and flame graph specific data
-    sec->parent_id = (g_profiler_instance.section_stack_top >= 0) ? g_profiler_instance.section_stack[g_profiler_instance.section_stack_top] : -1;
-    sec->depth = g_profiler_instance.section_stack_top + 1;
-    
-    uint64_t current_offset_ticks = sec->start_ticks - g_profiler_instance.frame_start_ticks;
-    sec->start_time_in_frame_ms = (double)current_offset_ticks * 1000.0 / g_profiler_instance.perf_freq;
+    strncpy(sec->name, name, PROFILER_SECTION_NAME_LEN - 1);
+    sec->name[PROFILER_SECTION_NAME_LEN - 1] = '\0'; // Ensure null termination
+    sec->total_ticks_this_frame = 0;
+    sec->call_count_this_frame = 0;
+    sec->total_time_this_frame_ms = 0.0;
+    sec->start_ticks_for_current_call = 0;
 
-    if (g_profiler_instance.section_stack_top < PROFILER_MAX_SECTIONS - 1) {
-        g_profiler_instance.section_stack[++g_profiler_instance.section_stack_top] = section_id;
-    } else {
-        // Stack overflow
+    return id;
+}
+
+int Profiler_CreateSection(const char* name)
+{
+    if (!g_profiler_enabled || !name) {
+        return -1;
     }
+    return Profiler_Internal_GetOrCreateSection(name);
+}
+
+int Profiler_BeginSection(const char* name)
+{
+    if (!g_profiler_enabled || !name || g_profiler.perf_freq == 0) {
+        return -1;
+    }
+
+    int section_id = Profiler_Internal_GetOrCreateSection(name);
+    if (section_id == -1) {
+        return -1;
+    }
+
+    Profiler_BeginSectionByID(section_id);
     return section_id;
 }
 
-void Profiler_EndSection(int section_id) {
-    if (!g_profiler_enabled || section_id < 0 || section_id >= g_profiler_instance.num_sections || !g_profiler_instance.sections[section_id].active) {
+void Profiler_BeginSectionByID(int section_id)
+{
+    if (!g_profiler_enabled ||
+        section_id < 0 ||
+        section_id >= g_profiler.num_write_sections || // Check against write buffer
+        g_profiler.perf_freq == 0) {
+        return;
+    }
+    // Operate on write buffer
+    g_profiler.write_sections_buffer[section_id].start_ticks_for_current_call = SDL_GetPerformanceCounter();
+}
+
+void Profiler_EndSection(int section_id)
+{
+    if (!g_profiler_enabled ||
+        section_id < 0 ||
+        section_id >= g_profiler.num_write_sections || // Check against write buffer
+        g_profiler.perf_freq == 0) {
         return;
     }
 
-    ProfilerSection* section = &g_profiler_instance.sections[section_id];
+    // Operate on write buffer
+    ProfilerSection* sec = &g_profiler.write_sections_buffer[section_id];
+
+    if (sec->start_ticks_for_current_call == 0) {
+        return;
+    }
+    
     uint64_t end_ticks = SDL_GetPerformanceCounter();
-    double duration_s = (double)(end_ticks - section->start_ticks) / g_profiler_instance.perf_freq;
-    section->current_time_ms = duration_s * 1000.0;
+    uint64_t duration_ticks = end_ticks - sec->start_ticks_for_current_call;
 
-    section->times[section->history_idx] = section->current_time_ms;
-    section->history_idx = (section->history_idx + 1) % PROFILER_HISTORY_SIZE;
-    section->active = false;
-
-    // Pop from stack
-    if (g_profiler_instance.section_stack_top >= 0 && g_profiler_instance.section_stack[g_profiler_instance.section_stack_top] == section_id) {
-        g_profiler_instance.section_stack_top--;
-    } else {
-        // Stack mismatch
-    }
-
-    // Record data for flame graph for this frame
-    if (g_profiler_instance.last_frame_flame_items_count < PROFILER_MAX_FLAME_GRAPH_ITEMS) {
-        FlameGraphItem* item = &g_profiler_instance.last_frame_flame_items[g_profiler_instance.last_frame_flame_items_count++];
-        strncpy(item->name, section->name, PROFILER_SECTION_NAME_LEN -1);
-        item->name[PROFILER_SECTION_NAME_LEN-1] = '\0';
-        item->start_time_ms = section->start_time_in_frame_ms;
-        item->duration_ms = section->current_time_ms;
-        item->depth = section->depth;
-    }
+    sec->total_ticks_this_frame += duration_ticks;
+    sec->call_count_this_frame++;
+    sec->start_ticks_for_current_call = 0; 
 }
 
-float Profiler_GetFPS(void) {
-    if (!g_profiler_enabled) return 0.0f;
-    return g_profiler_instance.current_fps;
+float Profiler_GetFPS(void)
+{
+    return g_profiler_enabled ? g_profiler.current_fps : 0.0f;
 }
 
-double Profiler_GetFrameTimeMS(void) {
-    if (!g_profiler_enabled) return 0.0;
-    return g_profiler_instance.current_frame_time_ms;
+double Profiler_GetFrameTimeMS(void)
+{
+    return g_profiler_enabled ? g_profiler.current_frame_time_ms : 0.0;
 }

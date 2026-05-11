@@ -1,9 +1,15 @@
 add_subdirectory(sdl EXCLUDE_FROM_ALL)
-add_subdirectory(glew EXCLUDE_FROM_ALL)
+
+set(BUILD_SHARED_AND_STATIC_LIBS TRUE)
+set(CJSON_BUILD_SHARED_LIBS FALSE)
+set(ENABLE_CJSON_TEST FALSE)
+set(ENABLE_CUSTOM_COMPILER_FLAGS OFF CACHE BOOL "Disable cJSON strict warning flags" FORCE)
+add_subdirectory(cjson EXCLUDE_FROM_ALL)
+
+set(SKIP_INSTALL_ALL ON)
+add_subdirectory(minizip-ng EXCLUDE_FROM_ALL)
 #add_subdirectory(libuv EXCLUDE_FROM_ALL)
 #add_subdirectory(zip EXCLUDE_FROM_ALL)
-#add_subdirectory(protobuf)
-#add_subdirectory(protobuf-c/build-cmake EXCLUDE_FROM_ALL)
 
 #STB
 #file(GLOB STB_SOURCES stb/*.h)
@@ -29,6 +35,7 @@ target_include_directories(imgui PUBLIC cimgui/imgui/backends)
 target_include_directories(imgui PUBLIC sdl/include)
 
 if (WIN32)
+    target_link_libraries(imgui PRIVATE imm32)
     #target_compile_definitions(imgui PUBLIC IMGUI_IMPL_API="extern \"C\" __declspec(dllexport)")
 else (WIN32)
     #target_compile_definitions(imgui PUBLIC IMGUI_IMPL_API="extern \"C\"")
@@ -37,7 +44,7 @@ endif (WIN32)
 target_compile_definitions(imgui PUBLIC IMGUI_USE_WCHAR32)
 target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS=1)
 
-target_link_libraries(imgui PRIVATE imm32)
+
 target_link_libraries(imgui PUBLIC SDL3-shared)
 
 set_target_properties(imgui PROPERTIES PREFIX "")
@@ -57,7 +64,7 @@ if(rendbk_position EQUAL -1 OR platbk_position EQUAL -1)
     cmake_path(REMOVE_EXTENSION C_COMP)
     #get includes string
     execute_process(
-    COMMAND luajit generator.lua ${C_COMP} "internal noimstrv" SDL3 SDLGPU3 "-I${CMAKE_CURRENT_SOURCE_DIR}/sdl/include"
+    COMMAND luajit generator.lua ${C_COMP} "internal noimstrv" sdl3 sdlgpu3 "-I${CMAKE_CURRENT_SOURCE_DIR}/sdl/include"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/cimgui/generator
     ERROR_VARIABLE error_command
     RESULT_VARIABLE build_command_result
@@ -85,12 +92,15 @@ target_include_directories(cimgui PUBLIC cimgui/imgui/backends/)
 
 if (WIN32)
     target_compile_definitions(cimgui PUBLIC IMGUI_IMPL_API=extern\t\"C\"\t__declspec\(dllexport\))
+    target_link_libraries(imgui PRIVATE imm32)
 else (WIN32)
     target_compile_definitions(cimgui PUBLIC IMGUI_IMPL_API=extern\t\"C\"\t)
 endif (WIN32)
 
+target_compile_definitions(cimgui PUBLIC IMGUI_USE_WCHAR32)
+
 target_link_libraries(cimgui PUBLIC imgui)
-target_link_libraries(cimgui PRIVATE imm32 stdc++ m)
+target_link_libraries(cimgui PRIVATE stdc++ m)
 
 set_target_properties(cimgui PROPERTIES PREFIX "")
 
@@ -115,3 +125,31 @@ target_include_directories(cimplot PRIVATE cimgui/imgui)
 target_link_libraries(cimplot PUBLIC cimgui imgui)
 
 set_target_properties(cimplot PROPERTIES PREFIX "")
+
+# LUA / LUAJIT
+set(USE_LUAJIT 0 CACHE BOOL "Enable LuaJIT scripting" FORCE)
+set(LUA_LIBS "" CACHE STRING "Lua libraries to link" FORCE)
+set(LUA_INCLUDE "" CACHE STRING "Lua include directory" FORCE)
+
+set(LUAJIT_CMAKE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/luajit-cmake")
+set(LUAJIT_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/luajit-src")
+
+# Prefer LuaJIT subproject when both wrapper and source are present.
+if (EXISTS "${LUAJIT_CMAKE_DIR}/CMakeLists.txt" AND EXISTS "${LUAJIT_SOURCE_DIR}/src/lua.h")
+    message(STATUS "Building LuaJIT from subprojects: ext/luajit-cmake + ext/luajit-src")
+    set(LUAJIT_DIR "${LUAJIT_SOURCE_DIR}" CACHE PATH "LuaJIT source root" FORCE)
+    add_subdirectory(luajit-cmake)
+    set(USE_LUAJIT 1 CACHE BOOL "Enable LuaJIT scripting" FORCE)
+    set(LUA_LIBS luajit::lib CACHE STRING "Lua libraries to link" FORCE)
+    set(LUA_INCLUDE "${LUAJIT_SOURCE_DIR}/src" CACHE STRING "Lua include directory" FORCE)
+else()
+    find_package(Lua 5.1 QUIET)
+    if (Lua_FOUND)
+        message(STATUS "System Lua 5.1 found at: ${LUA_INCLUDE_DIR}")
+        set(USE_LUAJIT 1 CACHE BOOL "Enable LuaJIT scripting" FORCE)
+        set(LUA_LIBS ${LUA_LIBRARIES} CACHE STRING "Lua libraries to link" FORCE)
+        set(LUA_INCLUDE "${LUA_INCLUDE_DIR}" CACHE STRING "Lua include directory" FORCE)
+    else()
+        message(STATUS "Lua scripting disabled: no usable LuaJIT subproject and no system Lua 5.1")
+    endif()
+endif()

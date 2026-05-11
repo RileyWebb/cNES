@@ -123,6 +123,8 @@ typedef struct PPU {
     // Output
     //uint32_t framebuffer[PPU_FRAMEBUFFER_WIDTH * PPU_FRAMEBUFFER_HEIGHT];
     uint32_t *framebuffer;
+
+    //struct PPUAccel accelerator;
 } PPU;
 
 // --- PPU Lifecycle Functions ---
