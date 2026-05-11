@@ -22,3 +22,6 @@
 [submodule "ext/luajit-src"]
 	path = ext/luajit-src
 	url = https://github.com/LuaJIT/LuaJIT
+[submodule "ext/stb"]
+	path = ext/stb
+	url = https://github.com/nothings/stb
